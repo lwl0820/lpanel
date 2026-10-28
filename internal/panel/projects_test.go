@@ -1,0 +1,218 @@
+package panel
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestProjectPortNormalization(t *testing.T) {
+	ports, err := parseProjectPorts([]byte("time=now level=warning msg=\"version obsolete\"\n" + `{"services":{"web":{"ports":[{"target":80,"published":"18080"},{"target":81},{"target":53,"published":"18053","protocol":"udp"}],"expose":["90","91/udp","92-93"]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 7 {
+		t.Fatalf("扫描结果：%+v", ports)
+	}
+	if ports[0].Protocol != "udp" || ports[1].Published != "18080" || ports[2].Source != "ports" || ports[2].Published != "" {
+		t.Fatalf("端口语义错误：%+v", ports)
+	}
+	for _, p := range ports {
+		if p.Source == "expose" && p.Published != "" {
+			t.Fatal("内部端口被发布")
+		}
+	}
+}
+func TestProjectStatusJSONFormats(t *testing.T) {
+	for _, data := range []string{"", `[]`, `{"Service":"web","State":"running","Publishers":[{"URL":"0.0.0.0","TargetPort":80,"PublishedPort":32345,"Protocol":"tcp"}]}` + "\n" + `{"Service":"db","State":"exited"}`} {
+		items, err := decodeProjectContainers([]byte(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(data, "web") {
+			if len(items) != 2 {
+				t.Fatal(items)
+			}
+			upstream, err := projectUpstream(items, "web", 80, "http")
+			if err != nil || upstream != "http://127.0.0.1:32345" {
+				t.Fatalf("动态端口错误 %s %v", upstream, err)
+			}
+			if _, err = projectUpstream(items, "db", 5432, "http"); err == nil {
+				t.Fatal("已停止服务不应可绑定")
+			}
+		}
+	}
+	ipv6, err := projectUpstream([]ProjectContainer{{Service: "web", State: "running", Publishers: []ProjectPublisher{{URL: "::1", TargetPort: 80, PublishedPort: 18080, Protocol: "tcp"}}}}, "web", 80, "https")
+	if err != nil || ipv6 != "https://[::1]:18080" {
+		t.Fatalf("IPv6错误：%s %v", ipv6, err)
+	}
+}
+func TestProjectSaveAndSecrets(t *testing.T) {
+	a, root := testApp(t)
+	// 路由由入口注册，测试也允许单独加载模块。
+	var count int
+	_ = a.DB.QueryRow("SELECT count(*) FROM sqlite_master WHERE name='projects'").Scan(&count)
+	if count == 0 {
+		if err := a.RegisterProjectRoutes(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "docker" && args[len(args)-1] == "json" {
+			return []byte(`{"services":{"web":{"ports":[{"target":80,"published":"18080"}]}}}`), nil
+		}
+		return nil, nil
+	}
+	login := call(a, "POST", "/api/v1/auth/login", `{"username":"管理员","password":"test-password"}`, nil)
+	cookie := login.Result().Cookies()[0]
+	if call(a, "GET", "/api/v1/projects", "", nil).Code != 401 {
+		t.Fatal("项目接口未认证")
+	}
+	body := `{"name":"测试网站","compose":"services:\\n web:","environment":"TOKEN=secret-value"}`
+	w := call(a, "POST", "/api/v1/projects", body, cookie)
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	var p Project
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	if _, err := os.Stat(filepath.Join(root, "data/projects", p.ID, ".env")); err != nil {
+		t.Fatal(err)
+	}
+	list := call(a, "GET", "/api/v1/projects", "", cookie)
+	if strings.Contains(list.Body.String(), "secret-value") || strings.Contains(list.Body.String(), "TOKEN") {
+		t.Fatal("列表泄露环境变量")
+	}
+	a.Command = func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("secret-value"), fmt.Errorf("配置无效")
+	}
+	bad := call(a, "PUT", "/api/v1/projects/"+p.ID, `{"name":"错误配置","compose":"bad","environment":"TOKEN=secret-value"}`, cookie)
+	if bad.Code != 400 || strings.Contains(bad.Body.String(), "secret-value") {
+		t.Fatal(bad.Body.String())
+	}
+	stored, err := a.project(context.Background(), p.ID)
+	if err != nil || stored.Name != "测试网站" {
+		t.Fatal("错误配置覆盖了项目")
+	}
+}
+func TestProjectDeletePreservesVolumesAndStopBindings(t *testing.T) {
+	a, root := testApp(t)
+	var count int
+	_ = a.DB.QueryRow("SELECT count(*) FROM sqlite_master WHERE name='projects'").Scan(&count)
+	if count == 0 {
+		if err := a.RegisterProjectRoutes(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := Project{ID: "projecttest", Name: "测试", Compose: "services: {}", Environment: "PORT=18080"}
+	_, err := a.DB.Exec("INSERT INTO projects VALUES(?,?,?,?,?)", p.ID, p.Name, p.Compose, p.Environment, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "data/projects", p.ID, "keep.txt")
+	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(path, []byte("保留"), 0600)
+	binding := Binding{ID: "project-binding", Kind: "project", ResourceID: p.ID, Domain: "app.example.com", Upstream: "http://127.0.0.1:18080", Service: "web", ContainerPort: 80}
+	if err = a.storeBinding(context.Background(), binding); err != nil {
+		t.Fatal(err)
+	}
+	a.Config.NginxConfigDir = filepath.Join(root, "nginx")
+	a.NginxProbe = func(context.Context, string, string, string) error { return nil }
+	var commands []string
+	a.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		return nil, nil
+	}
+	if _, err = a.runProjectAction(context.Background(), p, "stop"); err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := a.ListBindings(context.Background())
+	if err != nil || len(bindings) != 1 {
+		t.Fatal("停止项目删除了绑定")
+	}
+	if _, err = a.runProjectAction(context.Background(), p, "delete"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(path); err != nil {
+		t.Fatal("删除移除了挂载目录")
+	}
+	for _, command := range commands {
+		if strings.Contains(command, "--volumes") {
+			t.Fatal("删除传入了--volumes")
+		}
+	}
+	bindings, err = a.ListBindings(context.Background())
+	if err != nil || len(bindings) != 0 {
+		t.Fatal("删除未清理绑定")
+	}
+}
+func TestProjectRuntimeRefreshesPublishedPort(t *testing.T) {
+	a, root := testApp(t)
+	p := Project{ID: "refresh", Name: "测试"}
+	a.Config.NginxConfigDir = filepath.Join(root, "nginx")
+	a.NginxProbe = func(context.Context, string, string, string) error { return nil }
+	b := Binding{ID: "bound", Kind: "project", ResourceID: p.ID, Domain: "app.example.com", Upstream: "http://127.0.0.1:18080", Service: "web", ContainerPort: 80}
+	if err := a.storeBinding(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	a.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "docker" && args[len(args)-1] == "json" {
+			return []byte(`{"Service":"web","State":"running","Publishers":[{"URL":"0.0.0.0","TargetPort":80,"PublishedPort":32345,"Protocol":"tcp"}]}`), nil
+		}
+		return nil, nil
+	}
+	if _, err := a.runProjectAction(context.Background(), p, "deploy"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := a.binding(context.Background(), b.ID)
+	if err != nil || got.Upstream != "http://127.0.0.1:32345" {
+		t.Fatalf("没有刷新上游：%+v %v", got, err)
+	}
+}
+
+func TestProjectComposeCLINormalization(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("本机没有 Docker CLI")
+	}
+	a, root := testApp(t)
+	if _, err := a.Command(context.Background(), "docker", "compose", "version"); err != nil {
+		t.Skip("本机没有 Compose CLI")
+	}
+	p := Project{Name: "真实解析", Environment: "LPANEL_COMPOSE_TEST_PUBLISHED=18080", Compose: `version: "3.8"
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "${LPANEL_COMPOSE_TEST_PUBLISHED}:80"
+      - target: 81
+        published: "18081"
+        host_ip: 127.0.0.1
+        protocol: tcp
+      - "18053:53/udp"
+    expose:
+      - "90-91"
+      - "92/udp"
+`}
+	ports, err := a.scanProject(context.Background(), p, filepath.Join(root, ".tmp/actual-compose"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 6 {
+		t.Fatalf("实际扫描结果错误：%+v", ports)
+	}
+	found := false
+	for _, port := range ports {
+		if port.Service == "web" && port.ContainerPort == 80 && port.Published == "18080" && port.Source == "ports" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("环境变量没有正确展开：%+v", ports)
+	}
+}

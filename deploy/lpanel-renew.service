@@ -1,0 +1,10 @@
+[Unit]
+Description=LPanel 证书续期
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/lpanel
+Environment=TMPDIR=/opt/lpanel/.tmp
+ExecStart=/opt/lpanel/current/lpanel renew --root /opt/lpanel
