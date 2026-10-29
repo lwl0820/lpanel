@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端开发规范入口与质量检查命令"}
+{"file": ".trellis/spec/frontend/api-contract.md", "reason": "接口、操作状态与页面契约，重写页面时不得改变"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件约定"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "目录约定，本任务结束时补齐"}

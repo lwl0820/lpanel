@@ -1,0 +1,649 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LPanel 界面原型</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* 布局：白色侧栏 + 浅灰工作区；手机宽度下侧栏变为底部标签栏。只做浅色主题（用户已确认），所以不定义暗色块。 */
+:root {
+  color-scheme: light;
+  --bg: #f4f6f9;          /* 工作区底色，略偏蓝的灰 */
+  --surface: #ffffff;     /* 侧栏、面板 */
+  --sunken: #f8f9fb;      /* 表头、代码区、空状态图标底 */
+  --line: #e3e7ee;        /* 细边框 */
+  --line-strong: #cfd6e1;
+  --fg: #1c2433;          /* 正文 */
+  --muted: #5b6577;       /* 次要文字，对白底对比度约 5.9:1 */
+  --faint: #7a8496;       /* 提示文字，约 4.0:1，只用于 13px 以上 */
+  --accent: #3563e9;      /* 唯一主色 */
+  --accent-hover: #2a52c9;
+  --accent-soft: #edf2fe;
+  --ok: #17803d;   --ok-soft: #e8f6ed;
+  --warn: #a35a00; --warn-soft: #fdf3e3;
+  --bad: #c42b2b;  --bad-soft: #fdecec;
+  --log-bg: #1c2433; --log-fg: #d9dee7;
+  --scrim: rgba(28, 36, 51, .38);
+  --shadow: 0 1px 2px rgba(28,36,51,.05);
+  --shadow-pop: 0 8px 28px rgba(28,36,51,.14), 0 1px 3px rgba(28,36,51,.08);
+  --font: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  /* 字号阶梯：12 / 13 / 14 / 16 / 20 / 28 */
+  --t-xs: .75rem; --t-sm: .8125rem; --t-md: .875rem; --t-lg: 1rem; --t-xl: 1.25rem; --t-2xl: 1.75rem;
+  --r: 8px; --r-sm: 6px;
+  --side-w: 216px;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { min-height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: var(--t-md); line-height: 1.55; }
+button, input, select, textarea { font: inherit; color: inherit; }
+h1, h2, h3 { margin: 0; text-wrap: balance; font-weight: 600; }
+p { margin: 0; }
+.mono { font-family: var(--mono); font-size: .92em; }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.muted { color: var(--muted); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+/* 原型切换条：只属于原型，不进产品 */
+.proto { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding-block: 8px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); background: var(--fg); color: var(--log-fg); font-size: var(--t-xs); }
+.proto b { color: #fff; font-weight: 600; }
+.seg { display: inline-flex; border: 1px solid #3a4558; border-radius: var(--r-sm); overflow: hidden; }
+.seg button { border: 0; background: transparent; color: var(--log-fg); padding: 3px 10px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: #3a4558; color: #fff; }
+/* 外框 */
+.app { display: flex; align-items: flex-start; min-height: calc(100vh - 40px); }
+.side { position: sticky; top: env(safe-area-inset-top, 0px); flex: 0 0 var(--side-w); height: 100vh; display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--line); padding: 16px 12px; padding-left: max(12px, env(safe-area-inset-left, 0px)); }
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 20px; font-weight: 600; font-size: var(--t-lg); }
+.brand svg { width: 26px; height: 26px; flex: none; }
+.brand small { font-weight: 400; color: var(--faint); font-size: var(--t-xs); }
+.nav { display: grid; gap: 2px; }
+.nav button { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent; padding: 8px 10px; border-radius: var(--r-sm); color: var(--muted); cursor: pointer; text-align: left; }
+.nav button svg { width: 18px; height: 18px; flex: none; }
+.nav button:hover { background: var(--sunken); color: var(--fg); }
+.nav button[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.side-foot { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 12px 8px 0; border-top: 1px solid var(--line); }
+.avatar { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: var(--t-sm); flex: none; }
+.side-foot .who { flex: 1; min-width: 0; font-size: var(--t-sm); }
+.side-foot .who span { display: block; color: var(--faint); font-size: var(--t-xs); }
+.topbar { display: none; }
+.main { flex: 1; min-width: 0; padding-block: 28px 48px; padding-left: max(32px, env(safe-area-inset-left, 0px)); padding-right: max(32px, env(safe-area-inset-right, 0px)); }
+.content { max-width: 1120px; margin: 0 auto; display: grid; gap: 20px; }
+
+/* 页头 */
+.head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; }
+.head h1 { font-size: var(--t-xl); }
+.head p { color: var(--muted); margin-top: 4px; max-width: 60ch; }
+.head .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* 按钮 */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg); cursor: pointer; white-space: nowrap; font-size: var(--t-md); }
+.btn svg { width: 16px; height: 16px; }
+.btn:hover { border-color: var(--faint); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+.btn.ghost:hover { background: var(--sunken); color: var(--fg); }
+.btn.sm { height: 28px; padding: 0 10px; font-size: var(--t-sm); }
+.btn.icon { width: 30px; height: 30px; padding: 0; }
+.btn[disabled] { opacity: .55; cursor: not-allowed; }
+.link { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; text-decoration: none; }
+.link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 面板与表格 */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); min-width: 0; overflow: hidden; }
+.panel-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.panel-h h2 { font-size: var(--t-lg); }
+.panel-h .muted { font-size: var(--t-sm); }
+.panel-b { padding: 18px; }
+.panel-f { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); background: var(--sunken); }
+.tbl-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-weight: 500; font-size: var(--t-sm); color: var(--muted); background: var(--sunken); padding: 9px 18px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 12px 18px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: #fafbfd; }
+td .name { font-weight: 600; }
+td .sub { display: block; color: var(--faint); font-size: var(--t-sm); }
+td.actions { text-align: right; white-space: nowrap; width: 1%; }
+td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
+/* 状态标记：状态色与主色分开 */
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: var(--t-sm); font-weight: 500; white-space: nowrap; }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); }
+.pill.idle { background: var(--sunken); color: var(--muted); }
+.pill.run { background: var(--accent-soft); color: var(--accent); }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 4px; border: 1px solid var(--line); background: var(--sunken); color: var(--muted); font-size: var(--t-xs); white-space: nowrap; }
+.err-line { display: block; margin-top: 4px; color: var(--bad); font-size: var(--t-sm); max-width: 38ch; white-space: normal; }
+
+/* 概览 */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.stat { display: grid; gap: 2px; padding: 18px 20px; border: 0; border-right: 1px solid var(--line); background: transparent; text-align: left; cursor: pointer; }
+.stat:last-child { border-right: 0; }
+.stat:hover { background: var(--sunken); }
+.stat .lbl { color: var(--muted); font-size: var(--t-sm); }
+.stat .val { font-size: var(--t-2xl); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.3; }
+.stat .val.warn { color: var(--warn); }
+.stat .val.bad { color: var(--bad); }
+.stat .hint { color: var(--faint); font-size: var(--t-sm); }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.todo { list-style: none; margin: 0; padding: 0; }
+.todo li { display: flex; align-items: flex-start; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.todo li:last-child { border-bottom: 0; }
+.todo .dot { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; }
+.todo .dot svg { width: 15px; height: 15px; }
+.todo .dot.bad { background: var(--bad-soft); color: var(--bad); }
+.todo .dot.warn { background: var(--warn-soft); color: var(--warn); }
+.todo .dot.info { background: var(--accent-soft); color: var(--accent); }
+.todo .dot.ok { background: var(--ok-soft); color: var(--ok); }
+.todo .txt { flex: 1; min-width: 0; }
+.todo .txt b { display: block; font-weight: 600; }
+.todo .txt span { color: var(--muted); font-size: var(--t-sm); overflow-wrap: anywhere; }
+.todo .btn { flex: none; }
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 20px; margin: 0; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+
+/* 空状态 */
+.empty { display: grid; justify-items: center; gap: 8px; text-align: center; padding: 48px 20px 52px; }
+.empty .ico { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; background: var(--sunken); border: 1px solid var(--line); color: var(--faint); margin-bottom: 4px; }
+.empty .ico svg { width: 22px; height: 22px; }
+.empty h3 { font-size: var(--t-lg); }
+.empty p { color: var(--muted); max-width: 42ch; }
+.empty .btn { margin-top: 8px; }
+
+/* 表单 */
+.form { display: grid; gap: 16px; }
+.field { display: grid; gap: 6px; min-width: 0; }
+.field > label, .field > .lbl { font-weight: 500; font-size: var(--t-sm); }
+.field .hint { color: var(--faint); font-size: var(--t-sm); }
+.input, .select, .textarea { width: 100%; height: 36px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface); }
+.textarea { height: auto; padding: 10px 11px; font-family: var(--mono); font-size: var(--t-sm); line-height: 1.6; resize: vertical; }
+.input:focus, .select:focus, .textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.input.invalid { border-color: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
+.inline { display: flex; gap: 8px; }
+.inline .input { flex: 1; min-width: 0; }
+.check { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.check input { margin: 3px 0 0; accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
+.cols2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.settings { display: grid; gap: 20px; max-width: 760px; }
+/* 行内“更多”菜单：固定定位，避免被表格滚动容器裁剪 */
+.menu { position: fixed; z-index: 40; min-width: 168px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-pop); }
+.menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; background: transparent; border-radius: 4px; cursor: pointer; text-align: left; white-space: nowrap; }
+.menu button svg { width: 16px; height: 16px; color: var(--faint); }
+.menu button:hover, .menu button:focus-visible { background: var(--sunken); outline: none; }
+.menu button.danger, .menu button.danger svg { color: var(--bad); }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+
+/* 抽屉与对话框 */
+.scrim { position: fixed; inset: 0; z-index: 30; background: var(--scrim); display: flex; justify-content: flex-end; animation: fade .15s ease-out; }
+.scrim.center { justify-content: center; align-items: center; padding: 16px; }
+@keyframes fade { from { opacity: 0; } }
+.drawer { width: min(640px, 100%); height: 100%; background: var(--surface); display: flex; flex-direction: column; box-shadow: var(--shadow-pop); padding-top: env(safe-area-inset-top, 0px); padding-right: env(safe-area-inset-right, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); animation: slide .2s ease-out; }
+@keyframes slide { from { transform: translateX(24px); opacity: .6; } }
+.drawer-h, .modal-h { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.drawer-h h2, .modal-h h2 { font-size: var(--t-lg); }
+.drawer-h p { color: var(--muted); font-size: var(--t-sm); margin-top: 2px; }
+.drawer-b { flex: 1; overflow-y: auto; padding: 20px; display: grid; gap: 24px; align-content: start; }
+.drawer-f, .modal-f { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); background: var(--sunken); }
+.block { display: grid; gap: 12px; }
+.block-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.block-h h3 { font-size: var(--t-md); }
+.ports { border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+.ports-empty { padding: 14px; color: var(--faint); font-size: var(--t-sm); text-align: center; background: var(--sunken); }
+.ports th, .ports td { padding: 8px 12px; }
+.log { margin: 0; padding: 14px; border-radius: var(--r-sm); background: var(--log-bg); color: var(--log-fg); font-family: var(--mono); font-size: var(--t-xs); line-height: 1.7; overflow: auto; max-height: 320px; white-space: pre; }
+.modal { width: min(460px, 100%); background: var(--surface); border-radius: 10px; box-shadow: var(--shadow-pop); max-height: 100%; display: flex; flex-direction: column; overflow: hidden; animation: pop .15s ease-out; }
+@keyframes pop { from { transform: scale(.97); opacity: 0; } }
+.modal-b { padding: 20px; overflow-y: auto; display: grid; gap: 16px; }
+.modal-b > p { color: var(--muted); }
+
+/* 提示 */
+.toasts { position: fixed; z-index: 50; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); display: grid; gap: 8px; justify-items: center; width: max-content; max-width: calc(100% - 32px); pointer-events: none; }
+.toast { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: var(--r); background: var(--fg); color: #fff; box-shadow: var(--shadow-pop); font-size: var(--t-sm); animation: pop .15s ease-out; }
+.toast svg { width: 16px; height: 16px; flex: none; }
+.toast.ok svg { color: #6fd795; }
+.toast.bad svg { color: #ff8f8f; }
+
+/* 登录 */
+.login { min-height: calc(100vh - 40px); display: grid; place-items: center; padding-block: 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.login-card { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-pop); padding: 32px 28px 28px; display: grid; gap: 20px; }
+.login-card .brand { padding: 0; }
+.login-card h1 { font-size: var(--t-xl); }
+.login-card .sub { color: var(--muted); margin-top: 4px; }
+.login-card .btn { width: 100%; height: 38px; }
+.login-foot { text-align: center; color: var(--faint); font-size: var(--t-xs); }
+/* 中等宽度 */
+@media (max-width: 1080px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat:nth-child(2) { border-right: 0; }
+  .stat:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+  .grid2 { grid-template-columns: minmax(0, 1fr); }
+}
+/* 手机：侧栏变底部标签栏，表格变卡片列表，抽屉全屏 */
+@media (max-width: 760px) {
+  .app { display: block; }
+  .side { position: fixed; top: auto; left: 0; right: 0; bottom: 0; height: auto; z-index: 20; flex-direction: row; padding: 4px 0 env(safe-area-inset-bottom, 0px); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); border-right: 0; border-top: 1px solid var(--line); }
+  .side .brand, .side-foot { display: none; }
+  .nav { grid-template-columns: repeat(5, minmax(0, 1fr)); width: 100%; gap: 0; }
+  .nav button { flex-direction: column; gap: 2px; padding: 6px 2px; font-size: var(--t-xs); text-align: center; border-radius: 0; }
+  .nav button[aria-current="page"] { background: transparent; }
+  .nav button svg { width: 20px; height: 20px; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--surface); border-bottom: 1px solid var(--line); padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .topbar .brand { padding: 0; font-size: var(--t-md); }
+  .main { padding-block: 20px calc(88px + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .content { gap: 16px; }
+  .head { align-items: flex-start; }
+  .head .actions { width: 100%; }
+  .head .actions .btn.primary { flex: 1; }
+  .stat { padding: 14px 16px; }
+  .stat .val { font-size: var(--t-xl); }
+  .cols2 { grid-template-columns: minmax(0, 1fr); }
+  .rtable thead { display: none; }
+  .rtable, .rtable tbody, .rtable tr, .rtable td { display: block; width: auto; }
+  .rtable tr { position: relative; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .rtable tbody tr:last-child { border-bottom: 0; }
+  .rtable td { padding: 2px 0; border: 0; }
+  .rtable tbody tr:hover td { background: transparent; }
+  .rtable td.first { padding-right: 136px; margin-bottom: 6px; }
+  .rtable td[data-label] { display: flex; gap: 12px; align-items: baseline; font-size: var(--t-sm); }
+  .rtable td[data-label]::before { content: attr(data-label); flex: 0 0 64px; color: var(--faint); }
+  .rtable td.actions { position: absolute; top: 12px; right: 12px; width: auto; }
+  .drawer { width: 100%; }
+  .toasts { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+}
+</style>
+
+<div class="proto" role="region" aria-label="原型控制">
+  <b>LPanel 界面原型</b><span>示例数据，非真实服务器</span>
+  <span class="seg" role="group" aria-label="画面"><button id="p-app" data-act="screen" data-v="app" aria-pressed="true">面板</button><button id="p-login" data-act="screen" data-v="login" aria-pressed="false">登录页</button></span>
+  <span class="seg" role="group" aria-label="数据"><button id="p-full" data-act="data" data-v="full" aria-pressed="true">有数据</button><button id="p-empty" data-act="data" data-v="empty" aria-pressed="false">新装空面板</button></span>
+</div>
+
+<div id="login" class="login" hidden>
+  <form class="login-card" id="login-form" novalidate>
+    <div class="brand" data-logo>LPanel</div>
+    <div><h1>登录服务器面板</h1><p class="sub">使用初始化时设置的管理员账号。</p></div>
+    <div class="field"><label for="lg-user">用户名</label><input class="input" id="lg-user" autocomplete="username" value="admin"></div>
+    <div class="field"><label for="lg-pass">密码</label><input class="input" id="lg-pass" type="password" autocomplete="current-password" value="shotpass123"></div>
+    <button class="btn primary" type="submit">登录</button>
+    <p class="login-foot">LPanel v0.2.1</p>
+  </form>
+</div>
+
+<div id="app" class="app">
+  <aside class="side">
+    <div class="brand" data-logo>LPanel</div>
+    <nav class="nav" id="nav" aria-label="主导航"></nav>
+    <div class="side-foot"><div class="avatar">A</div><div class="who">admin<span>管理员</span></div><button class="btn ghost icon" data-act="screen" data-v="login" title="退出登录" aria-label="退出登录" data-icon="logout"></button></div>
+  </aside>
+  <div class="main-col" style="flex:1;min-width:0">
+    <header class="topbar"><div class="brand" data-logo>LPanel</div><button class="btn ghost sm" data-act="screen" data-v="login">退出</button></header>
+    <main class="main"><div class="content" id="content"></div></main>
+  </div>
+</div>
+<div id="menu" class="menu" role="menu" hidden></div>
+<div id="layer"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script>
+const P = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`
+const I = {
+  logo: '<svg viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="7" fill="#3563e9"/><path d="M8 7v12h10" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  overview: P('<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
+  projects: P('<path d="M21 8 12 3 3 8v8l9 5 9-5V8Z"/><path d="m3 8 9 5 9-5M12 13v8"/>'),
+  sites: P('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/>'),
+  domains: P('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
+  settings: P('<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>'),
+  more: P('<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'),
+  plus: P('<path d="M12 5v14M5 12h14"/>'),
+  refresh: P('<path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4"/>'),
+  rocket: P('<path d="M12 15 9 12c1.5-4 4.5-7.5 10-8-.5 5.5-4 8.5-8 10Z"/><path d="M9 12H5l2.5-3.5H11M12 15v4l3.5-2.5V13M6 18c-1 1-1.5 2.5-1.5 2.5S6 20 7 19"/>'),
+  play: P('<path d="M7 5v14l11-7L7 5Z"/>'),
+  stop: P('<rect x="6" y="6" width="12" height="12" rx="1.5"/>'),
+  restart: P('<path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/>'),
+  log: P('<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>'),
+  edit: P('<path d="M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4"/>'),
+  link: P('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
+  trash: P('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
+  cert: P('<path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>'),
+  alert: P('<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>'),
+  clock: P('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  up: P('<path d="M12 19V5M6 11l6-6 6 6"/>'),
+  check: P('<path d="m5 12 5 5L20 7"/>'),
+  x: P('<path d="M6 6l12 12M18 6 6 18"/>'),
+  logout: P('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/>'),
+}
+const NAV = [
+  { id: 'overview', label: '概览' }, { id: 'projects', label: '容器项目' }, { id: 'sites', label: '静态网站' },
+  { id: 'domains', label: '域名与证书' }, { id: 'config', label: '面板设置' },
+]
+NAV.forEach(n => n.icon = n.id === 'config' ? 'settings' : n.id)
+
+// 示例数据：字段与 web/src/*-api.ts 的接口一致
+const TODAY = new Date('2026-10-29T10:00:00+08:00')
+const SAMPLE = () => ({
+  projects: [
+    { id: 'p1', name: 'ghost-blog', updated_at: '2026-10-27 21:14' },
+    { id: 'p2', name: 'uptime-kuma', updated_at: '2026-10-21 09:02' },
+    { id: 'p3', name: 'gitea', updated_at: '2026-09-30 16:48' },
+  ],
+  sites: [
+    { id: 's1', name: '公司官网', directory: '/srv/www/example', spa: false },
+    { id: 's2', name: '文档站', directory: '/srv/www/docs/dist', spa: true },
+  ],
+  bindings: [
+    { id: 'b1', kind: 'panel', resource_id: '', domain: 'panel.example.com', certificate_status: 'enabled', certificate_error: '', expires_at: '2027-01-14' },
+    { id: 'b2', kind: 'project', resource_id: 'p1', domain: 'blog.example.com', service: 'ghost', container_port: 2368, certificate_status: 'enabled', certificate_error: '', expires_at: '2026-11-10' },
+    { id: 'b3', kind: 'project', resource_id: 'p2', domain: 'status.example.com', service: 'uptime-kuma', container_port: 3001, certificate_status: 'enabled', certificate_error: '', expires_at: '2027-01-02' },
+    { id: 'b4', kind: 'site', resource_id: 's1', domain: 'www.example.com', certificate_status: 'failed', certificate_error: 'DNS 记录未指向本服务器（解析到 203.0.113.9）', expires_at: '' },
+    { id: 'b5', kind: 'site', resource_id: 's2', domain: 'docs.example.com', certificate_status: 'disabled', certificate_error: '', expires_at: '' },
+  ],
+  access: { panel_port: 8443, panel_domain: 'panel.example.com', https: true, acme_email: 'ops@example.com', acme_server: 'production', agree_tos: true },
+  upgrade: { repository: 'lwl0820/lpanel', current: 'v0.2.1', latest: 'v0.3.0', available: true, checked_at: '2026-10-29 08:30' },
+})
+const EMPTY = () => ({
+  projects: [], sites: [], bindings: [],
+  access: { panel_port: 8443, panel_domain: '', https: false, acme_email: '', acme_server: 'production', agree_tos: false },
+  upgrade: { repository: '', current: 'v0.2.1', latest: '', available: false, checked_at: '' },
+})
+const S = { screen: 'app', view: 'overview', mode: 'full', data: SAMPLE() }
+const $ = s => document.querySelector(s)
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+const D = () => S.data
+const daysLeft = d => d ? Math.ceil((new Date(d + 'T00:00:00+08:00') - TODAY) / 864e5) : null
+const KIND = { panel: '面板', project: '容器项目', site: '静态网站' }
+function certPill(b) {
+  if (b.certificate_status === 'requesting') return '<span class="pill run">申请中</span>'
+  if (b.certificate_status === 'failed') return '<span class="pill bad">申请失败</span>'
+  if (b.certificate_status === 'enabled') return daysLeft(b.expires_at) <= 30 ? '<span class="pill warn">即将到期</span>' : '<span class="pill ok">有效</span>'
+  return '<span class="pill idle">未启用</span>'
+}
+const domainsOf = (kind, id) => D().bindings.filter(b => b.kind === kind && b.resource_id === id)
+function target(b) {
+  if (b.kind === 'panel') return '本面板'
+  if (b.kind === 'project') { const p = D().projects.find(x => x.id === b.resource_id); return `${esc(p?.name)} <span class="muted">· ${esc(b.service)}:${b.container_port}</span>` }
+  const s = D().sites.find(x => x.id === b.resource_id); return `${esc(s?.name)} <span class="muted mono">· ${esc(s?.directory)}</span>`
+}
+const needCert = () => D().bindings.filter(b => b.certificate_status === 'failed' || (b.certificate_status === 'enabled' && daysLeft(b.expires_at) <= 30))
+const head = (t, p, actions = '') => `<div class="head"><div><h1>${t}</h1><p>${p}</p></div><div class="actions">${actions}</div></div>`
+const empty = (icon, t, p, btn = '') => `<div class="empty"><div class="ico">${I[icon]}</div><h3>${t}</h3><p>${p}</p>${btn}</div>`
+const moreBtn = (kind, id, label) => `<button class="btn ghost icon" data-act="menu" data-kind="${kind}" data-id="${id}" aria-haspopup="menu" aria-label="${esc(label)} 的更多操作">${I.more}</button>`
+
+const V = {}
+V.overview = () => {
+  const d = D(), nc = needCert(), bad = nc.some(b => b.certificate_status === 'failed')
+  const stat = (go, lbl, val, hint, cls = '') => `<button class="stat" data-act="go" data-v="${go}"><span class="lbl">${lbl}</span><span class="val ${cls}">${val}</span><span class="hint">${hint}</span></button>`
+  const fresh = !d.projects.length && !d.sites.length
+  let todo = ''
+  for (const b of nc) todo += b.certificate_status === 'failed'
+    ? `<li><span class="dot bad">${I.alert}</span><span class="txt"><b>${esc(b.domain)} 证书申请失败</b><span>${esc(b.certificate_error)}</span></span><button class="btn sm" data-act="cert" data-id="${b.id}">重新申请</button></li>`
+    : `<li><span class="dot warn">${I.clock}</span><span class="txt"><b>${esc(b.domain)} 证书 ${daysLeft(b.expires_at)} 天后到期</b><span>到期日 ${b.expires_at}，可提前续期</span></span><button class="btn sm" data-act="cert" data-id="${b.id}">续期</button></li>`
+  if (d.upgrade.available) todo += `<li><span class="dot info">${I.up}</span><span class="txt"><b>可升级到 ${esc(d.upgrade.latest)}</b><span>当前 ${esc(d.upgrade.current)}，检查于 ${esc(d.upgrade.checked_at)}</span></span><button class="btn sm" data-act="go" data-v="config">查看</button></li>`
+  if (!todo) todo = `<li><span class="dot ok">${I.check}</span><span class="txt"><b>一切正常</b><span>没有失败或即将到期的证书，面板已是最新版本。</span></span></li>`
+  const start = `<div class="panel"><div class="panel-h"><h2>开始使用</h2></div><ul class="todo">
+    <li><span class="dot info">1</span><span class="txt"><b>添加容器项目</b><span>粘贴 Compose 配置，一键部署。</span></span><button class="btn sm primary" data-act="new-project">新建项目</button></li>
+    <li><span class="dot info">2</span><span class="txt"><b>或添加静态网站</b><span>指定服务器上的网页目录。</span></span><button class="btn sm" data-act="new-site">新建网站</button></li>
+    <li><span class="dot info">3</span><span class="txt"><b>绑定域名并申请证书</b><span>先把域名解析到本服务器。</span></span><button class="btn sm" data-act="go" data-v="domains">去绑定</button></li></ul></div>`
+  const a = d.access, url = `${a.https ? 'https' : 'http'}://${a.panel_domain || '服务器 IP'}:${a.panel_port}`
+  return head('概览', '服务器上的项目、网站和需要处理的事项。') +
+    `<div class="panel stats">${stat('projects', '容器项目', d.projects.length, d.projects.length ? `${d.projects.filter(p => domainsOf('project', p.id).length).length} 个已绑定域名` : '尚未添加')}${stat('sites', '静态网站', d.sites.length, d.sites.length ? `${d.sites.filter(s => s.spa).length} 个单页应用` : '尚未添加')}${stat('domains', '域名', d.bindings.length, d.bindings.length ? `${d.bindings.filter(b => b.certificate_status === 'enabled').length} 个已启用 HTTPS` : '尚未绑定')}${stat('domains', '证书需处理', nc.length, nc.length ? '失败或 30 天内到期' : '无', nc.length ? (bad ? 'bad' : 'warn') : '')}</div>` +
+    `<div class="grid2">${fresh ? start : `<div class="panel"><div class="panel-h"><h2>需要处理</h2><span class="muted">${nc.length + (d.upgrade.available ? 1 : 0)} 项</span></div><ul class="todo">${todo}</ul></div>`}
+    <div class="panel"><div class="panel-h"><h2>面板访问</h2></div><div class="panel-b"><dl class="kv"><dt>访问地址</dt><dd class="mono">${esc(url)}</dd><dt>HTTPS</dt><dd>${a.https ? '<span class="pill ok">已启用</span>' : '<span class="pill idle">未启用</span>'}</dd><dt>证书邮箱</dt><dd>${esc(a.acme_email) || '<span class="muted">未填写</span>'}</dd><dt>版本</dt><dd>${esc(d.upgrade.current)}</dd></dl></div><div class="panel-f"><button class="btn sm" data-act="go" data-v="config">面板设置</button></div></div></div>`
+}
+const domLinks = list => list.length ? list.map(b => `<span class="sub">${esc(b.domain)}</span>`).join('') : '<span class="sub">未绑定域名</span>'
+V.projects = () => {
+  const d = D(), add = `<button class="btn primary" data-act="new-project">${I.plus}新建项目</button>`
+  if (!d.projects.length) return head('容器项目', '用 Docker Compose 部署和管理应用。') + `<div class="panel">${empty('projects', '还没有容器项目', '新建一个项目，粘贴 Compose 配置后即可部署。', add)}</div>`
+  const rows = d.projects.map(p => `<tr><td class="first"><span class="name">${esc(p.name)}</span>${domLinks(domainsOf('project', p.id))}</td>
+    <td data-label="配置更新" class="muted">${esc(p.updated_at)}</td>
+    <td class="actions"><span class="row-act"><button class="btn sm" data-act="deploy" data-id="${p.id}">${I.rocket}部署</button>${moreBtn('project', p.id, p.name)}</span></td></tr>`).join('')
+  return head('容器项目', '用 Docker Compose 部署和管理应用。运行状态在“状态与日志”中查看。', add) +
+    `<div class="panel"><div class="tbl-wrap"><table class="rtable"><thead><tr><th>项目</th><th>配置更新时间</th><th><span class="sr">操作</span></th></tr></thead><tbody>${rows}</tbody></table></div></div>`
+}
+V.sites = () => {
+  const d = D(), add = `<button class="btn primary" data-act="new-site">${I.plus}新建网站</button>`
+  if (!d.sites.length) return head('静态网站', '直接托管服务器目录中的网页文件。') + `<div class="panel">${empty('sites', '还没有静态网站', '指定一个服务器目录，即可作为网站对外访问。', add)}</div>`
+  const rows = d.sites.map(s => `<tr><td class="first"><span class="name">${esc(s.name)}</span>${domLinks(domainsOf('site', s.id))}</td>
+    <td data-label="目录" class="mono">${esc(s.directory)}</td>
+    <td data-label="类型">${s.spa ? '<span class="tag">单页应用</span>' : '<span class="tag">普通网站</span>'}</td>
+    <td class="actions"><span class="row-act"><button class="btn sm" data-act="edit-site" data-id="${s.id}">${I.edit}编辑</button>${moreBtn('site', s.id, s.name)}</span></td></tr>`).join('')
+  return head('静态网站', '直接托管服务器目录中的网页文件。', add) +
+    `<div class="panel"><div class="tbl-wrap"><table class="rtable"><thead><tr><th>网站</th><th>目录</th><th>类型</th><th><span class="sr">操作</span></th></tr></thead><tbody>${rows}</tbody></table></div></div>`
+}
+V.domains = () => {
+  const d = D(), add = `<button class="btn primary" data-act="bind">${I.plus}绑定域名</button>`
+  if (!d.bindings.length) return head('域名与证书', '把域名指向面板、项目或网站，并自动申请 HTTPS 证书。') + `<div class="panel">${empty('domains', '还没有绑定域名', '先把域名的 DNS 解析到本服务器，再在这里绑定。', add)}</div>`
+  const rows = d.bindings.map(b => { const n = daysLeft(b.expires_at)
+    return `<tr><td class="first"><span class="name">${esc(b.domain)}</span><span class="sub"><span class="tag">${KIND[b.kind]}</span></span></td>
+    <td data-label="指向">${target(b)}</td>
+    <td data-label="证书"><span>${certPill(b)}${b.certificate_error ? `<span class="err-line">${esc(b.certificate_error)}</span>` : ''}</span></td>
+    <td data-label="到期" class="num">${b.expires_at && b.certificate_status !== 'failed' ? `${b.expires_at}<span class="sub">剩 ${n} 天</span>` : '<span class="muted">—</span>'}</td>
+    <td class="actions"><span class="row-act">${moreBtn('binding', b.id, b.domain)}</span></td></tr>` }).join('')
+  return head('域名与证书', '把域名指向面板、项目或网站，并自动申请 HTTPS 证书。证书到期前 30 天会标记提醒。', add) +
+    `<div class="panel"><div class="tbl-wrap"><table class="rtable"><thead><tr><th>域名</th><th>指向</th><th>证书</th><th>到期时间</th><th><span class="sr">操作</span></th></tr></thead><tbody>${rows}</tbody></table></div></div>`
+}
+V.config = () => {
+  const a = D().access, u = D().upgrade, url = `${a.https ? 'https' : 'http'}://${a.panel_domain || '服务器 IP'}:${a.panel_port}`
+  return head('面板设置', '面板的访问方式、证书账号和版本升级。') + `<div class="settings">
+  <form class="panel" id="f-access" novalidate><div class="panel-h"><h2>访问与证书</h2></div><div class="panel-b form">
+    <dl class="kv"><dt>访问地址</dt><dd class="mono">${esc(url)}</dd><dt>面板域名</dt><dd>${a.panel_domain ? esc(a.panel_domain) + ' <span class="muted">· 在“域名与证书”中修改</span>' : '<button type="button" class="link" data-act="go" data-v="domains">去绑定面板域名</button>'}</dd></dl>
+    <div class="field"><label for="acme-email">证书联系邮箱（可选）</label><input class="input" id="acme-email" type="email" value="${esc(a.acme_email)}" placeholder="ops@example.com"><span class="hint">证书即将到期或出现问题时，Let&#39;s Encrypt 会发邮件通知。</span></div>
+    <label class="check"><input type="checkbox" id="acme-tos" ${a.agree_tos ? 'checked' : ''}><span>我同意 <a class="link" href="https://letsencrypt.org/repository/" target="_blank" rel="noopener">Let&#39;s Encrypt 服务条款</a><span class="hint" style="display:block;color:var(--faint);font-size:var(--t-sm)">申请证书前必须同意。</span></span></label>
+  </div><div class="panel-f"><button class="btn primary" type="submit">保存设置</button></div></form>
+  <div class="panel"><div class="panel-h"><h2>面板升级</h2>${u.available ? `<span class="pill run">有新版本</span>` : ''}</div><div class="panel-b form">
+    <dl class="kv"><dt>当前版本</dt><dd>${esc(u.current)}</dd><dt>最新版本</dt><dd>${u.latest ? esc(u.latest) : '<span class="muted">尚未检查</span>'}</dd><dt>上次检查</dt><dd>${esc(u.checked_at) || '<span class="muted">—</span>'}</dd></dl>
+    <div class="field"><label for="repo">发布仓库</label><div class="inline"><input class="input mono" id="repo" value="${esc(u.repository)}" placeholder="owner/repo"><button class="btn" data-act="save-repo">保存</button></div><span class="hint">从该 GitHub 仓库的 Releases 检查新版本。</span></div>
+  </div><div class="panel-f"><button class="btn" data-act="check">${I.refresh}检查更新</button>${u.available ? `<button class="btn primary" data-act="upgrade">升级到 ${esc(u.latest)}</button>` : ''}</div></div></div>`
+}
+function render(focus) {
+  $('#login').hidden = S.screen !== 'login'; $('#app').hidden = S.screen !== 'app'
+  for (const [id, on] of [['#p-app', S.screen === 'app'], ['#p-login', S.screen === 'login'], ['#p-full', S.mode === 'full'], ['#p-empty', S.mode === 'empty']]) $(id).setAttribute('aria-pressed', on)
+  $('#nav').innerHTML = NAV.map(n => `<button data-act="go" data-v="${n.id}" ${n.id === S.view ? 'aria-current="page"' : ''}>${I[n.icon]}<span>${n.label}</span></button>`).join('')
+  $('#content').innerHTML = V[S.view]()
+  document.title = `${NAV.find(n => n.id === S.view).label} · LPanel`
+  if (focus) $('#content h1')?.focus?.()
+}
+function toast(msg, kind = 'ok', ms = 2600) {
+  const t = document.createElement('div'); t.className = `toast ${kind}`
+  t.innerHTML = (kind === 'run' ? '<span class="spin"></span>' : kind === 'bad' ? I.x : I.check) + `<span>${esc(msg)}</span>`
+  $('#toasts').append(t); if (ms) setTimeout(() => t.remove(), ms); return t
+}
+// 长操作：先显示“已提交”，结果返回后才提示成功
+function pending(msg, done, ms = 1600, after) {
+  const t = toast(msg + '，等待结果…', 'run', 0)
+  setTimeout(() => { t.remove(); after?.(); toast(done) }, ms)
+}
+function busy(btn, on) { if (!btn) return; btn.disabled = on; if (on) { btn.dataset.html = btn.innerHTML; btn.innerHTML = '<span class="spin"></span>' + btn.textContent } else btn.innerHTML = btn.dataset.html }
+
+// 行内更多菜单
+let menuFrom = null
+const MENUS = {
+  project: p => [['deploy', 'rocket', '部署'], ['start', 'play', '启动'], ['stop', 'stop', '停止'], ['restart', 'restart', '重启'], '-', ['logs', 'log', '状态与日志'], ['edit-project', 'edit', '编辑配置'], ['bind', 'link', '绑定域名'], '-', ['del-project', 'trash', '删除项目', 'danger']],
+  site: s => [['edit-site', 'edit', '编辑'], ['bind', 'link', '绑定域名'], '-', ['del-site', 'trash', '删除网站', 'danger']],
+  binding: b => [['cert', 'cert', b.certificate_status === 'failed' ? '重新申请证书' : b.certificate_status === 'enabled' ? '续期证书' : '申请证书'], ['edit-binding', 'edit', '编辑']].concat(b.kind === 'panel' ? [] : ['-', ['unbind', 'trash', '解除绑定', 'danger']]),
+}
+const find = (kind, id) => (kind === 'project' ? D().projects : kind === 'site' ? D().sites : D().bindings).find(x => x.id === id)
+function openMenu(btn) {
+  const m = $('#menu'), { kind, id } = btn.dataset
+  if (menuFrom === btn) return closeMenu()
+  closeMenu(); menuFrom = btn; btn.setAttribute('aria-expanded', 'true')
+  m.innerHTML = MENUS[kind](find(kind, id)).map(x => x === '-' ? '<hr>' : `<button role="menuitem" class="${x[3] || ''}" data-act="${x[0]}" data-kind="${kind}" data-id="${id}">${I[x[1]]}${x[2]}</button>`).join('')
+  m.hidden = false
+  const r = btn.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight
+  m.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + 'px'
+  m.style.top = (r.bottom + 4 + h > innerHeight - 8 ? Math.max(8, r.top - h - 4) : r.bottom + 4) + 'px'
+  m.querySelector('button').focus()
+}
+function closeMenu(refocus) {
+  if (!menuFrom) return
+  $('#menu').hidden = true; menuFrom.setAttribute('aria-expanded', 'false')
+  if (refocus) menuFrom.focus({ preventScroll: true }); menuFrom = null
+}
+// 对话框与抽屉：ok 返回 false 时保持打开（用于校验）
+let layerFrom = null
+function openLayer(html, center, ok) {
+  layerFrom = document.activeElement
+  $('#layer').innerHTML = `<div class="scrim${center ? ' center' : ''}">${html}</div>`
+  const box = $('#layer .scrim > *')
+  box.querySelector('[data-ok]')?.addEventListener('click', e => { e.preventDefault(); if (ok?.(box, e.currentTarget) !== false) closeLayer() })
+  box.querySelector('form')?.addEventListener('submit', e => { e.preventDefault(); box.querySelector('[data-ok]')?.click() })
+  ;(box.querySelector('input, textarea, select') || box.querySelector('[data-ok]') || box.querySelector('[data-close]'))?.focus()
+  return box
+}
+function closeLayer() { $('#layer').innerHTML = ''; layerFrom?.focus?.({ preventScroll: true }); layerFrom = null }
+const closeX = `<button type="button" class="btn ghost icon" data-close aria-label="关闭">${I.x}</button>`
+function modal(title, body, okText, ok, danger) {
+  return openLayer(`<form class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}" novalidate><div class="modal-h"><h2>${title}</h2>${closeX}</div><div class="modal-b">${body}</div>
+    <div class="modal-f"><button type="button" class="btn" data-close>取消</button><button type="submit" class="btn ${danger ? 'danger' : 'primary'}" data-ok>${okText}</button></div></form>`, true, ok)
+}
+function drawer(title, sub, body, foot, ok) {
+  return openLayer(`<form class="drawer" role="dialog" aria-modal="true" aria-label="${esc(title)}" novalidate><div class="drawer-h"><div><h2>${title}</h2>${sub ? `<p>${sub}</p>` : ''}</div>${closeX}</div><div class="drawer-b">${body}</div><div class="drawer-f">${foot}</div></form>`, false, ok)
+}
+function need(box, sel, msg) {
+  const el = box.querySelector(sel), bad = !el.value.trim()
+  el.classList.toggle('invalid', bad); el.setAttribute('aria-invalid', bad)
+  const hint = el.closest('.field').querySelector('.hint.err'); if (hint) hint.remove()
+  if (bad) { el.insertAdjacentHTML('afterend', `<span class="hint err" style="color:var(--bad)">${msg}</span>`); el.focus() }
+  return !bad
+}
+const COMPOSE = 'services:\n  ghost:\n    image: ghost:5-alpine\n    restart: unless-stopped\n    ports:\n      - "127.0.0.1:2368:2368"\n    environment:\n      url: https://blog.example.com\n    volumes:\n      - ./content:/var/lib/ghost/content\n'
+function projectDrawer(p) {
+  const box = drawer(p ? `编辑 ${esc(p.name)}` : '新建容器项目', p ? `配置更新于 ${esc(p.updated_at)}` : '保存后需要点击“部署”才会启动容器。', `
+    <div class="field"><label for="pj-name">项目名称</label><input class="input" id="pj-name" value="${esc(p?.name)}" placeholder="例如 ghost-blog" ${p ? 'readonly' : ''}><span class="hint">只能包含小写字母、数字和连字符，创建后不能修改。</span></div>
+    <div class="field"><label for="pj-compose">Compose 配置</label><textarea class="textarea" id="pj-compose" rows="13" spellcheck="false" placeholder="services:">${p ? esc(COMPOSE) : ''}</textarea></div>
+    <div class="field"><label for="pj-env">环境变量 .env（可选）</label><textarea class="textarea" id="pj-env" rows="4" spellcheck="false" placeholder="KEY=value">${p ? 'TZ=Asia/Shanghai\n' : ''}</textarea></div>
+    <div class="block"><div class="block-h"><h3>服务端口</h3><button type="button" class="btn sm" data-act="scan">${I.refresh}扫描端口</button></div>
+      <div class="ports" id="ports"><div class="ports-empty">从 Compose 配置中识别可绑定域名的端口。</div></div></div>`,
+    `<button type="button" class="btn" data-close>取消</button><button type="submit" class="btn primary" data-ok>${p ? '保存配置' : '创建项目'}</button>`,
+    box => {
+      if (!need(box, '#pj-name', '请填写项目名称') || !need(box, '#pj-compose', '请填写 Compose 配置')) return false
+      if (!p) D().projects.unshift({ id: 'p' + Date.now(), name: box.querySelector('#pj-name').value.trim(), updated_at: '2026-10-29 10:00' })
+      else p.updated_at = '2026-10-29 10:00'
+      render(); toast(p ? '配置已保存，重新部署后生效' : '项目已创建')
+    })
+}
+function scanPorts(btn) {
+  const box = $('#ports'); busy(btn, true); box.innerHTML = '<div class="ports-empty">正在解析 Compose 配置…</div>'
+  setTimeout(() => { busy(btn, false)
+    box.innerHTML = `<table><thead><tr><th>服务</th><th>容器端口</th><th>宿主机</th><th>来源</th></tr></thead><tbody>
+      <tr><td>ghost</td><td class="mono">2368/tcp</td><td class="mono">127.0.0.1:2368</td><td><span class="tag">ports</span></td></tr>
+      <tr><td>db</td><td class="mono">3306/tcp</td><td class="muted">未发布</td><td><span class="tag">expose</span></td></tr></tbody></table>` }, 900)
+}
+const LOG = `ghost-1  | [2026-10-29 09:58:12] INFO Ghost is running in production...
+ghost-1  | [2026-10-29 09:58:12] INFO Your site is now available on https://blog.example.com/
+ghost-1  | [2026-10-29 09:58:13] INFO Ctrl+C to shut down
+db-1     | 2026-10-29T01:58:02Z 0 [System] [MY-010931] ready for connections. port: 3306
+ghost-1  | [2026-10-29 10:02:41] INFO "GET /" 200 38ms`
+function logsDrawer(p) {
+  drawer(`${esc(p.name)} · 状态与日志`, '显示最近 200 行日志。', `
+    <div class="block"><h3 style="font-size:var(--t-md)">容器</h3><div class="ports"><table><thead><tr><th>服务</th><th>状态</th><th>端口</th></tr></thead><tbody>
+      <tr><td>ghost</td><td><span class="pill ok">运行中</span></td><td class="mono">127.0.0.1:2368→2368</td></tr>
+      <tr><td>db</td><td><span class="pill ok">运行中 · 健康</span></td><td class="muted">—</td></tr></tbody></table></div></div>
+    <div class="block"><div class="block-h"><h3>日志</h3><button type="button" class="btn sm" data-act="reload-log">${I.refresh}刷新</button></div><pre class="log" id="log">${esc(LOG)}</pre></div>`,
+    `<button type="button" class="btn" data-close>关闭</button>`)
+}
+function siteModal(s) {
+  modal(s ? '编辑网站' : '新建静态网站', `
+    <div class="field"><label for="st-name">网站名称</label><input class="input" id="st-name" value="${esc(s?.name)}" placeholder="例如 公司官网"></div>
+    <div class="field"><label for="st-dir">网页目录</label><input class="input mono" id="st-dir" value="${esc(s?.directory)}" placeholder="/srv/www/example"><span class="hint">服务器上的绝对路径，目录中应包含 index.html。</span></div>
+    <label class="check"><input type="checkbox" id="st-spa" ${s?.spa ? 'checked' : ''}><span>单页应用（找不到的路径都返回 index.html）</span></label>`,
+    s ? '保存' : '创建', box => {
+      if (!need(box, '#st-name', '请填写网站名称') || !need(box, '#st-dir', '请填写网页目录')) return false
+      const v = { name: box.querySelector('#st-name').value.trim(), directory: box.querySelector('#st-dir').value.trim(), spa: box.querySelector('#st-spa').checked }
+      s ? Object.assign(s, v) : D().sites.push({ id: 's' + Date.now(), ...v }); render(); toast(s ? '网站已保存' : '网站已创建')
+    })
+}
+function bindModal(pre, b) {
+  const d = D(), cur = b ? `${b.kind}:${b.resource_id}` : pre || (d.projects[0] ? `project:${d.projects[0].id}` : d.sites[0] ? `site:${d.sites[0].id}` : 'panel:')
+  const opt = (v, t) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${esc(t)}</option>`
+  const opts = (d.projects.length ? `<optgroup label="容器项目">${d.projects.map(p => opt('project:' + p.id, p.name)).join('')}</optgroup>` : '') +
+    (d.sites.length ? `<optgroup label="静态网站">${d.sites.map(s => opt('site:' + s.id, s.name)).join('')}</optgroup>` : '') + `<optgroup label="其他">${opt('panel:', '本面板')}</optgroup>`
+  const box = modal(b ? `编辑 ${esc(b.domain)}` : '绑定域名', `
+    <div class="field"><label for="bd-domain">域名</label><input class="input" id="bd-domain" value="${esc(b?.domain)}" placeholder="blog.example.com" ${b ? 'readonly' : ''}><span class="hint">请先把该域名的 A 记录解析到本服务器。</span></div>
+    <div class="field"><label for="bd-target">指向</label><select class="select" id="bd-target" ${b ? 'disabled' : ''}>${opts}</select></div>
+    <div class="field" id="bd-port-f"><label for="bd-port">服务端口</label><select class="select" id="bd-port"><option>ghost · 2368</option><option>db · 3306</option></select><span class="hint">来自项目 Compose 配置的端口扫描结果。</span></div>
+    <label class="check"><input type="checkbox" id="bd-cert" checked><span>自动申请 HTTPS 证书</span></label>`,
+    b ? '保存' : '绑定', box => {
+      if (!need(box, '#bd-domain', '请填写域名')) return false
+      if (b) { render(); return toast('已保存') }
+      const [kind, rid] = box.querySelector('#bd-target').value.split(':'), auto = box.querySelector('#bd-cert').checked
+      const nb = { id: 'b' + Date.now(), kind, resource_id: rid, domain: box.querySelector('#bd-domain').value.trim(), service: 'ghost', container_port: 2368, certificate_status: auto ? 'requesting' : 'disabled', certificate_error: '', expires_at: '' }
+      d.bindings.push(nb); render()
+      auto ? pending('域名已绑定，证书申请中', '证书申请成功', 2200, () => { nb.certificate_status = 'enabled'; nb.expires_at = '2027-01-27'; render() }) : toast('域名已绑定')
+    })
+  const sync = () => { box.querySelector('#bd-port-f').hidden = !box.querySelector('#bd-target').value.startsWith('project') }
+  box.querySelector('#bd-target').addEventListener('change', sync); sync()
+}
+function confirmDel(title, what, done) {
+  modal(title, `<p>将删除 <b style="color:var(--fg)">${esc(what)}</b>。此操作无法撤销。</p>`, '删除', () => { done(); render(); toast('已删除') }, true)
+}
+const A = {
+  screen: (el) => { S.screen = el.dataset.v; render() },
+  data: (el) => { S.mode = el.dataset.v; S.data = S.mode === 'full' ? SAMPLE() : EMPTY(); render() },
+  go: (el) => { closeLayer(); S.view = el.dataset.v; render(); scrollTo(0, 0) },
+  menu: (el) => openMenu(el),
+  'new-project': () => projectDrawer(),
+  'edit-project': (el, x) => projectDrawer(x),
+  logs: (el, x) => logsDrawer(x),
+  scan: (el) => scanPorts(el),
+  'reload-log': (el) => { busy(el, true); setTimeout(() => busy(el, false), 700) },
+  deploy: (el, x) => pending(`${x.name} 部署已提交`, `${x.name} 部署完成`, 2400),
+  start: (el, x) => pending(`${x.name} 启动中`, `${x.name} 已启动`),
+  stop: (el, x) => pending(`${x.name} 停止中`, `${x.name} 已停止`),
+  restart: (el, x) => pending(`${x.name} 重启中`, `${x.name} 已重启`),
+  'del-project': (el, x) => confirmDel('删除容器项目', x.name, () => { D().projects = D().projects.filter(p => p !== x) }),
+  'new-site': () => siteModal(),
+  'edit-site': (el, x) => siteModal(x),
+  'del-site': (el, x) => confirmDel('删除静态网站', x.name, () => { D().sites = D().sites.filter(s => s !== x) }),
+  bind: (el, x) => bindModal(x && el.dataset.kind ? `${el.dataset.kind}:${x.id}` : ''),
+  'edit-binding': (el, x) => bindModal('', x),
+  unbind: (el, x) => modal('解除域名绑定', `<p>解除后 <b style="color:var(--fg)">${esc(x.domain)}</b> 将无法访问，证书也会停止续期。</p>`, '解除绑定', () => { D().bindings = D().bindings.filter(b => b !== x); render(); toast('已解除绑定') }, true),
+  cert: (el, x) => {
+    x.certificate_status = 'requesting'; x.certificate_error = ''; render()
+    pending(`${x.domain} 证书申请已提交`, `${x.domain} 证书已签发`, 2200, () => { x.certificate_status = 'enabled'; x.expires_at = '2027-01-27'; render() })
+  },
+  'save-repo': (el) => { busy(el, true); setTimeout(() => { busy(el, false); D().upgrade.repository = $('#repo').value.trim(); toast('发布仓库已保存') }, 600) },
+  check: (el) => { busy(el, true); setTimeout(() => { const u = D().upgrade; u.latest = 'v0.3.0'; u.available = true; u.checked_at = '2026-10-29 10:00'; render(); toast('发现新版本 v0.3.0') }, 900) },
+  upgrade: () => { const u = D().upgrade; modal(`升级到 ${esc(u.latest)}`, `<p>升级期间面板会重启约 10 秒，已部署的容器和网站不受影响。</p>`, '开始升级',
+    () => pending('升级已开始', `已升级到 ${u.latest}`, 2600, () => { u.current = u.latest; u.available = false; render() })) },
+}
+document.addEventListener('click', e => {
+  if (e.target.classList?.contains('scrim')) return closeLayer()
+  if (e.target.closest('[data-close]')) return closeLayer()
+  const el = e.target.closest('[data-act]')
+  if (!el) { if (!e.target.closest('#menu')) closeMenu(); return }
+  e.preventDefault()
+  const act = el.dataset.act
+  if (act !== 'menu') closeMenu()
+  const x = el.dataset.id ? find(el.dataset.kind || (act === 'cert' ? 'binding' : act.includes('site') ? 'site' : 'project'), el.dataset.id) : null
+  A[act]?.(el, x)
+})
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { if (menuFrom) return closeMenu(true); if ($('#layer').innerHTML) return closeLayer() }
+  if (menuFrom && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    e.preventDefault(); const items = [...$('#menu').querySelectorAll('button')], i = items.indexOf(document.activeElement)
+    items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus()
+  }
+})
+addEventListener('scroll', () => closeMenu(), true)
+addEventListener('resize', () => closeMenu())
+document.addEventListener('submit', e => {
+  if (e.target.id === 'login-form') { e.preventDefault(); S.screen = 'app'; render() }
+  if (e.target.id === 'f-access') {
+    e.preventDefault(); const btn = e.target.querySelector('[type=submit]'), a = D().access
+    busy(btn, true); setTimeout(() => { busy(btn, false); a.acme_email = $('#acme-email').value.trim(); a.agree_tos = $('#acme-tos').checked; toast('设置已保存') }, 600)
+  }
+})
+document.querySelectorAll('[data-logo]').forEach(el => el.insertAdjacentHTML('afterbegin', I.logo))
+document.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = I[el.dataset.icon])
+render()
+</script>
+</style>
