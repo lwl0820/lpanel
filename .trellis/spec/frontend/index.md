@@ -7,8 +7,8 @@
 | 文档 | 状态 |
 | --- | --- |
 | [API 与页面契约](./api-contract.md) | 已从代码落实 |
-| [目录结构](./directory-structure.md) | 初始化模板，后续从真实代码补齐 |
-| [组件](./component-guidelines.md) | 初始化模板 |
+| [目录结构](./directory-structure.md) | 已从代码落实 |
+| [组件](./component-guidelines.md) | 已从代码落实，含公共组件和长操作用法 |
 | [组合式逻辑](./hook-guidelines.md) | 初始化模板，不要求提前抽取组合函数 |
 | [状态管理](./state-management.md) | 初始化模板，当前使用局部响应式状态 |
 | [质量](./quality-guidelines.md) | 初始化模板，检查命令见下方 |
