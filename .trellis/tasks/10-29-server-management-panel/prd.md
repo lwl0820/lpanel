@@ -49,9 +49,9 @@
 | --- | --- | --- |
 | [基础框架与登录](../archive/2026-11/10-29-panel-foundation/prd.md) | 无 | R5，以及 R1、R6 的基础能力 |
 | [Nginx 域名与证书](../10-29-nginx-domain-certificates/prd.md) | 基础框架 | R1、R8、R9 |
-| [Compose 项目](../10-29-compose-projects/prd.md) | 基础框架、域名与证书 | R2、R7 |
+| [Compose 项目](../archive/2026-11/10-29-compose-projects/prd.md) | 基础框架、域名与证书 | R2、R7 |
 | [静态网站](../archive/2026-11/10-29-static-websites/prd.md) | 基础框架、域名与证书 | R3 |
-| [版本升级](../10-29-panel-upgrade/prd.md) | 基础框架、固定的安装与发布布局 | R4 |
+| [版本升级](../archive/2026-11/10-29-panel-upgrade/prd.md) | 基础框架、固定的安装与发布布局 | R4 |
 | [一键安装](../10-29-one-click-install/prd.md) | 上述能力及发布产物 | R6、R10，集成 R8、R9 |
 
 ## 外部验收前提与延期事项

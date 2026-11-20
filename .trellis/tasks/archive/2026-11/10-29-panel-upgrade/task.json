@@ -3,7 +3,7 @@
   "name": "panel-upgrade",
   "title": "版本检查与面板升级",
   "description": "自动检查最新版本并提醒用户，提供获取新版本及执行升级的功能",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "lwl0820",
   "assignee": "lwl0820",
   "createdAt": "2026-10-29",
-  "completedAt": null,
+  "completedAt": "2026-11-20",
   "branch": "codex/server-management-panel",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "7cfe8977376d3da1b422dcf73f186bb4bbae9a85",
   "pr_url": null,
   "subtasks": [],
   "children": [
@@ -25,6 +25,6 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "implementation_status": "代码质量门通过，提交已获批准，相应外部验收待完成"
+    "implementation_status": "Debian 12 amd64 虚拟机通过真实 systemd 工作进程从正式 Release 在线升级至 v0.1.1。原管理员、会话、项目、网站、域名及证书保留。受控候选版本启动失败时，工作进程恢复上一版指针和主服务，并记录回退结果。"
   }
 }
