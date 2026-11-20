@@ -13,7 +13,7 @@
 - `GET /api/v1/acme/accounts` 返回 `accounts`、`providers` 和 `default_account_id`。在该路径通过 POST 新增账户，通过 PUT 或 DELETE 操作 `/{id}` 下的账户。输入使用 `name`、`provider`、`email`、`agree_tos` 和可选的 `eab_kid`、`eab_hmac_key`。账户响应包含 `provider_name` 与 `needs_eab`，新建 ZeroSSL 账户已保存但注册失败时返回 `201` 和 `needs_eab: true`，可编辑后重试。
 - UpgradeWorker(ctx, root, version, operationID, releaseDir) 在独立 systemd service 中执行版本切换。
 - CLI 支持 `setup-nginx --root`、`bind-panel --root --domain`、`renew --root`。绑定时可用 `--auto-cert`、`--agree-tos`、`--email`、`--acme-provider`、`--acme-eab-file` 和兼容的 `--acme-server`。内部升级调用 `upgrade-worker`。
-- 安装入口 `sudo bash deploy/install.sh [选项]` 支持 `--repository`、`--archive`、`--username`、`--password`、`--port`、`--domain`、`--auto-cert`、`--agree-tos`、`--email`、`--acme-provider` 和 `--acme-eab-file`。 [参数详情](../../../docs/install.md#命令行参数)
+- 安装入口 `sudo bash deploy/install.sh [选项]` 支持 `--repository`、`--archive`、`--username`、`--password`、`--port`、`--login-path`、`--domain`、`--auto-cert`、`--agree-tos`、`--email`、`--acme-provider` 和 `--acme-eab-file`。 [参数详情](../../../docs/install.md#命令行参数)
 - 官方安装布局的卸载入口为 `sudo bash deploy/uninstall.sh`。脚本从终端询问是否清理 Compose 项目，并单独读取最终确认。
 
 ## 3. 数据与环境契约
@@ -34,7 +34,9 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 在线安装按命令行仓库、`LPANEL_REPOSITORY`、交互输入的顺序取值。安装仅询问当前方式适用的缺项。填写域名后，自动申请证书的交互默认值为 `y`。申请证书时，提供商默认 Let’s Encrypt，所选条款默认同意，联系邮箱默认为 `acme@<转为小写的面板域名>`。按回车接受默认值。申请证书的安装创建首个 ACME 账户，HTTP 安装从空账户列表开始。显式空域名表示使用服务器地址，显式空邮箱表示留空。密码始终通过标准输入交给面板初始化。 [密码传递约定](./logging-guidelines.md)
 
-安装完成前通过 Nginx 的面板端口访问 `/api/v1/health`，确认 `status` 为 `ok` 且 `version` 与发行标签一致，再检查首页。域名入口保留域名和协议并在本机连接，证书失败时检查本机 HTTP 入口。探测连接失败时静默重试，持续失败时退出并提示查看服务日志。 [安装脚本](../../../deploy/install.sh)
+安装前通过 `init --help` 核对发行包是否支持用户指定的非空 `--login-path`，失败时可更换发行包重试。省略、显式为空或填 `/` 时沿用旧版初始化参数。安装完成前，默认通过 Nginx 探测 `/api/v1/health`，启用入口时直接探测 Go 回环端口。两种模式都确认返回的 `status` 为 `ok` 且 `version` 与发行标签一致，再经 Nginx 检查实际登录地址返回 HTTP 200。域名入口保留域名和协议并在本机连接，证书失败时检查 HTTP 登录地址。探测连接失败时静默重试，持续失败时退出并提示查看服务日志。 [安装脚本](../../../deploy/install.sh)
+
+入口校验仅影响面板虚拟主机。启用时，面板主监听和浏览器使用的辅助 HTTP 跳转监听都交给 Go 校验路径和会话，HTTP-01 仍由 `/.well-known/acme-challenge/` 直接提供。配置标识 `/.lpanel/config` 的探针从 IPv4 回环端口发起。候选路径沿用 Nginx 配置检查、重载和回读流程，再保存配置。常规模式下 Nginx 返回的面板 `index.html` 带 `Cache-Control: no-cache`，浏览器在稍后启用入口时会重新请求页面。
 
 卸载处理 `/opt/lpanel/current`、`/opt/lpanel/releases`、三个 LPanel systemd 单元和带 LPanel 管理标记的 `/etc/nginx/conf.d/lpanel.conf`。移除该配置停用面板及其管理的业务域名入口。默认保留项目容器、目录和记录。选中 Compose 清理时，以 SQLite `projects.id` 为准，使用 `lpanel-<ID>`、项目目录内的 `compose.yaml` 和 `.env` 执行 `down --remove-orphans`。Docker 清理成功后移除该项目目录（含相对挂载目录）、项目记录及 `bindings.payload` 中同一项目的绑定。保留其他数据库记录、证书、Docker 卷、镜像和目录外的数据。
 

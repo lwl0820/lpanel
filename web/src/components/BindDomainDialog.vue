@@ -2,7 +2,7 @@
 import { computed, reactive, ref, useId, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import type { Operation } from '../api'
-import { domains, type Binding } from '../domain-api'
+import { domains, panelLoginURL, type Binding } from '../domain-api'
 import { projects, type Project, type ProjectPort } from '../projects-api'
 import { sites, type Site } from '../sites-api'
 import { errorText } from '../format'
@@ -58,7 +58,7 @@ async function scan() {
     if (targetId.value === id) ports.value = result
   } catch (e) { error.value = errorText(e, '扫描端口失败') } finally { scanning.value = false }
 }
-async function panelURL(domain: string) { try { return `https://${domain}:${(await domains.access()).panel_port}` } catch { return '' } }
+async function panelURL(domain: string) { try { return panelLoginURL(await domains.access(), domain, true) } catch { return '' } }
 async function submit() {
   if (saving.value || (requestsCertificate.value && !form.accountId) || !await formRef.value?.validate().catch(() => false)) return
   saving.value = true; error.value = ''

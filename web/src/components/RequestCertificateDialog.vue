@@ -2,7 +2,7 @@
 import { ref, useId, watch } from 'vue'
 import type { Operation } from '../api'
 import { certificateActionLabel } from '../cert'
-import { domains, type Binding } from '../domain-api'
+import { domains, panelLoginURL, type Binding } from '../domain-api'
 import { errorText } from '../format'
 import AcmeAccountSelect from './AcmeAccountSelect.vue'
 
@@ -33,7 +33,7 @@ async function submit() {
   error.value = ''
   try {
     const accessURL = binding.kind === 'panel'
-      ? `https://${binding.domain}:${(await domains.access()).panel_port}`
+      ? panelLoginURL(await domains.access(), binding.domain, true)
       : ''
     const operation = await domains.certificate(binding.id, accountId.value)
     open.value = false

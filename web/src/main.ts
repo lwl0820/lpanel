@@ -5,4 +5,5 @@ import 'element-plus/dist/index.css'
 import App from './App.vue'
 import { createAppRouter } from './router'
 import './style.css'
-createApp(App).use(createAppRouter()).use(ElementPlus, { locale: zhCn }).mount('#app')
+const loginPath = document.querySelector<HTMLMetaElement>('meta[name="lpanel-login-path"]')?.content ?? ''
+createApp(App, { loginPath }).use(createAppRouter(undefined, loginPath)).use(ElementPlus, { locale: zhCn }).mount('#app')

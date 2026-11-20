@@ -15,8 +15,8 @@ const submit = () => emit('submit', username.value.trim(), password.value)
       <div><h1>登录服务器面板</h1><p class="sub">使用初始化时设置的管理员账号。</p></div>
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon/>
       <div>
-        <el-form-item label="用户名"><el-input v-model="username" autocomplete="username" placeholder="请输入用户名"/></el-form-item>
-        <el-form-item label="密码"><el-input v-model="password" type="password" show-password autocomplete="current-password" placeholder="请输入密码"/></el-form-item>
+        <el-form-item label="用户名"><el-input v-model="username" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" :spellcheck="false" placeholder="请输入用户名"/></el-form-item>
+        <el-form-item label="密码"><el-input v-model="password" name="password" type="password" show-password autocomplete="current-password" placeholder="请输入密码"/></el-form-item>
       </div>
       <el-button native-type="submit" type="primary" size="large" :loading="submitting" class="login-submit">登录</el-button>
       <p class="login-foot">LPanel · 服务器管理面板</p>

@@ -6,7 +6,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -14,11 +16,27 @@ type Config struct {
 	Listen            string `json:"listen"`
 	PanelPort         int    `json:"panel_port"`
 	PanelDomain       string `json:"panel_domain"`
+	LoginPath         string `json:"login_path"`
 	HTTPS             bool   `json:"https"`
 	ReleaseRepository string `json:"release_repository"`
 	ACMEEmail         string `json:"acme_email"`
 	ACMEServer        string `json:"acme_server"`
 	NginxConfigDir    string `json:"nginx_config_dir"`
+}
+
+var loginPathPattern = regexp.MustCompile(`^(/[a-zA-Z0-9_-]+)+$`)
+
+func validateLoginPath(path string) error {
+	if path == "" || path == "/" {
+		return nil
+	}
+	if !loginPathPattern.MatchString(path) {
+		return fmt.Errorf("登录路径须以 / 开头，每段仅可使用英文字母、数字、短横线和下划线")
+	}
+	if path == "/api" || strings.HasPrefix(path, "/api/") || path == "/assets" || strings.HasPrefix(path, "/assets/") {
+		return fmt.Errorf("此登录路径已被面板使用，请换一个路径")
+	}
+	return nil
 }
 
 func DefaultConfig() Config {
@@ -33,6 +51,9 @@ func LoadConfig(root string) (Config, error) {
 	}
 	if err = json.Unmarshal(data, &config); err != nil {
 		return config, fmt.Errorf("配置格式错误：%w", err)
+	}
+	if config.LoginPath == "/" {
+		config.LoginPath = ""
 	}
 	return config, config.Validate()
 }
@@ -52,12 +73,15 @@ func (config Config) Validate() error {
 	if backendPort == config.PanelPort {
 		return fmt.Errorf("面板端口不能与后端端口相同")
 	}
-	return nil
+	return validateLoginPath(config.LoginPath)
 }
 
 func SaveConfig(root string, config Config) error {
 	if err := config.Validate(); err != nil {
 		return err
+	}
+	if config.LoginPath == "/" {
+		config.LoginPath = ""
 	}
 	if err := os.MkdirAll(root, 0755); err != nil {
 		return err

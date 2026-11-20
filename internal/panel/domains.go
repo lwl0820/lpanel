@@ -112,7 +112,8 @@ func (a *App) registerDomains() error {
 		}
 		WriteJSON(w, 202, op)
 	})))
-	a.Mux.Handle("GET /api/v1/system/access", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { WriteJSON(w, 200, a.Config) })))
+	a.Mux.Handle("GET /api/v1/system/access", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { WriteJSON(w, 200, a.currentConfig()) })))
+	a.Mux.Handle("PUT /api/v1/system/access/login-path", a.RequireAuth(http.HandlerFunc(a.saveLoginPath)))
 	a.Mux.Handle("PUT /api/v1/system/access", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			ACMEEmail  string `json:"acme_email"`
@@ -122,7 +123,7 @@ func (a *App) registerDomains() error {
 		if !ReadJSON(w, r, &in) {
 			return
 		}
-		config := a.Config
+		config := a.currentConfig()
 		config.ACMEEmail = in.ACMEEmail
 		config.ACMEServer = in.ACMEServer
 		config.AgreeTOS = in.AgreeTOS
@@ -130,7 +131,7 @@ func (a *App) registerDomains() error {
 			WriteError(w, 400, "config_error", err.Error())
 			return
 		}
-		WriteJSON(w, 200, config)
+		WriteJSON(w, 200, a.currentConfig())
 	})))
 	return nil
 }
@@ -279,7 +280,7 @@ func (a *App) BindingURL(b Binding) string {
 		scheme = "https"
 	}
 	if b.Kind == "panel" {
-		return fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(b.Domain, fmt.Sprint(a.Config.PanelPort)))
+		return fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(b.Domain, fmt.Sprint(a.currentConfig().PanelPort)))
 	}
 	return scheme + "://" + b.Domain
 }
@@ -288,9 +289,10 @@ func (a *App) ApplyNginx(ctx context.Context) error {
 	defer a.domainsMu.Unlock()
 	return a.applyNginx(ctx)
 }
-func (a *App) renderNginx(items []Binding, marker string) string {
+func (a *App) renderNginx(items []Binding, marker string, config Config) string {
 	var out strings.Builder
 	acme := fmt.Sprintf("location ^~ /.well-known/acme-challenge/ { root %q; default_type text/plain; }\n", filepath.Join(a.Root, "acme-webroot"))
+	proxy := fmt.Sprintf("proxy_pass http://%s; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-LPanel-Proxy 1;", config.Listen)
 	panel := Binding{Kind: "panel", Domain: "_"}
 	others := []Binding{}
 	for _, b := range items {
@@ -304,11 +306,17 @@ func (a *App) renderNginx(items []Binding, marker string) string {
 	for _, b := range all {
 		port := 80
 		if b.Kind == "panel" {
-			port = a.Config.PanelPort
+			port = config.PanelPort
 		}
 		tls := b.CertificateStatus == "enabled"
 		if tls || b.Kind == "panel" && port != 80 {
-			fmt.Fprintf(&out, "server { listen 80; server_name %s; %s location / { return 301 %s; } }\n", b.Domain, acme, strings.ReplaceAll(a.BindingURL(b), "://_:", "://$host:")+"$request_uri")
+			destination := strings.ReplaceAll(a.BindingURL(b), "://_:", "://$host:")
+			fmt.Fprintf(&out, "server { listen 80; server_name %s; %s", b.Domain, acme)
+			if b.Kind == "panel" && config.LoginPath != "" {
+				fmt.Fprintf(&out, "location / { %s proxy_set_header X-LPanel-Redirect %s; } }\n", proxy, destination)
+			} else {
+				fmt.Fprintf(&out, "location / { return 301 %s$request_uri; } }\n", destination)
+			}
 		}
 		if tls && b.Kind != "panel" {
 			port = 443
@@ -325,8 +333,18 @@ func (a *App) renderNginx(items []Binding, marker string) string {
 		out.WriteString(acme)
 		switch b.Kind {
 		case "panel":
-			fmt.Fprintf(&out, "location = /.lpanel/config { default_type text/plain; return 200 %q; }\n", marker)
-			fmt.Fprintf(&out, "root %q; index index.html; location / { try_files $uri $uri/ /index.html; } location /api/ { proxy_pass http://%s; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto $scheme; }\n", filepath.Join(a.Root, "current/web"), a.Config.Listen)
+			out.WriteString("location = /.lpanel/config { default_type text/plain; ")
+			if config.LoginPath != "" {
+				out.WriteString("if ($remote_addr != 127.0.0.1) { return 404; } ")
+			}
+			fmt.Fprintf(&out, "return 200 %q; }\n", marker)
+			if config.LoginPath != "" {
+				fmt.Fprintf(&out, "location / { %s proxy_set_header X-LPanel-Redirect \"\"; }\n", proxy)
+			} else {
+				fmt.Fprintf(&out, "root %q; index index.html; location / { try_files $uri $uri/ /index.html; }\n", filepath.Join(a.Root, "current/web"))
+				out.WriteString("location = /index.html { add_header Cache-Control no-cache; }\n")
+				fmt.Fprintf(&out, "location /api/ { %s proxy_set_header X-LPanel-Redirect \"\"; }\n", proxy)
+			}
 		case "site":
 			fallback := "=404"
 			if b.SPA {
@@ -341,6 +359,10 @@ func (a *App) renderNginx(items []Binding, marker string) string {
 	return "# 本文件由 LPanel 管理\n" + out.String()
 }
 func (a *App) applyNginx(ctx context.Context) error {
+	return a.applyNginxConfig(ctx, a.currentConfig())
+}
+
+func (a *App) applyNginxConfig(ctx context.Context, config Config) error {
 	items, err := a.ListBindings(ctx)
 	if err != nil {
 		return err
@@ -348,10 +370,10 @@ func (a *App) applyNginx(ctx context.Context) error {
 	if err = os.MkdirAll(filepath.Join(a.Root, "acme-webroot/.well-known/acme-challenge"), 0755); err != nil {
 		return err
 	}
-	if err = os.MkdirAll(a.Config.NginxConfigDir, 0755); err != nil {
+	if err = os.MkdirAll(config.NginxConfigDir, 0755); err != nil {
 		return err
 	}
-	path := filepath.Join(a.Config.NginxConfigDir, "lpanel.conf")
+	path := filepath.Join(config.NginxConfigDir, "lpanel.conf")
 	old, readErr := os.ReadFile(path)
 	if readErr != nil && !os.IsNotExist(readErr) {
 		return readErr
@@ -361,7 +383,6 @@ func (a *App) applyNginx(ctx context.Context) error {
 		return err
 	}
 	marker := hex.EncodeToString(raw)
-	config := a.Config
 	config.PanelDomain = ""
 	config.HTTPS = false
 	for _, b := range items {
@@ -370,7 +391,7 @@ func (a *App) applyNginx(ctx context.Context) error {
 			config.HTTPS = b.CertificateStatus == "enabled"
 		}
 	}
-	if err = os.WriteFile(path, []byte(a.renderNginx(items, marker)), 0644); err != nil {
+	if err = os.WriteFile(path, []byte(a.renderNginx(items, marker, config)), 0644); err != nil {
 		return err
 	}
 	restore := func() error {
@@ -420,7 +441,7 @@ func (a *App) applyNginx(ctx context.Context) error {
 	if err = SaveConfig(a.Root, config); err != nil {
 		return errors.Join(fmt.Errorf("保存面板配置失败：%w", err), rollback())
 	}
-	a.Config = config
+	a.setConfig(config)
 	return nil
 }
 func (a *App) RequestCertificate(ctx context.Context, id string) error {

@@ -17,6 +17,7 @@ import (
 
 type App struct {
 	domainsMu  sync.Mutex
+	configMu   sync.RWMutex
 	Root       string
 	Config     Config
 	Version    string
@@ -122,7 +123,19 @@ func Open(root, version string) (*App, error) {
 	return a, nil
 }
 func (a *App) Close() error          { return a.DB.Close() }
-func (a *App) Handler() http.Handler { return a.Mux }
+func (a *App) Handler() http.Handler { return http.HandlerFunc(a.servePanel) }
+
+func (a *App) currentConfig() Config {
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	return a.Config
+}
+
+func (a *App) setConfig(config Config) {
+	a.configMu.Lock()
+	a.Config = config
+	a.configMu.Unlock()
+}
 
 func (a *App) Serve(ctx context.Context) error {
 	if _, err := a.DB.Exec("UPDATE operations SET status='failed',error='服务重启，操作已中断' WHERE status IN ('queued','running') AND kind!='upgrade'"); err != nil {

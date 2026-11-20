@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory, type RouteLocationNormalizedLoaded, type RouteRecordRaw, type RouterHistory } from 'vue-router'
+import LoginCard from './components/LoginCard.vue'
 export const routes: RouteRecordRaw[] = [
   { path: '/', component: () => import('./views/OverviewView.vue'), meta: { title: '概览' } },
   { path: '/projects', component: () => import('./views/ProjectsView.vue'), meta: { title: '容器项目' } },
@@ -12,4 +13,7 @@ export const routeLabel = (route: RouteLocationNormalizedLoaded) => String(route
 // document.title 由 App 按登录状态设置：未登录为 LOGIN_TITLE，登录后为 pageTitle(当前路由)
 export const pageTitle = (route: RouteLocationNormalizedLoaded) => `${routeLabel(route)} · LPanel`
 export const LOGIN_TITLE = '登录 · LPanel'
-export const createAppRouter = (history: RouterHistory = createWebHistory()) => createRouter({ history, routes })
+export const createAppRouter = (history: RouterHistory = createWebHistory(), loginPath = '') => createRouter({
+  history,
+  routes: loginPath ? [{ path: loginPath, component: LoginCard, strict: true, sensitive: true }] : routes,
+})

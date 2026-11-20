@@ -38,6 +38,7 @@ sudo bash deploy/install.sh --archive /服务器路径/lpanel_v0.1.0_linux_amd64
 | `--username <账号>` | 设置管理员账号。交互默认值为 `admin`。 |
 | `--password <密码>` | 设置单行管理员密码，长度为 8 至 72 字节。密码以 `--` 开头时使用 `--password=<密码>`。省略时隐藏输入并要求确认。 |
 | `--port <端口>` | 设置面板端口。交互默认值为 `8443`。 |
+| `--login-path <路径>` | 设置专用登录路径，例如 `/abcdef`。默认留空，从 `/` 登录。 |
 | `--domain <域名>` | 绑定面板域名。`--domain ''` 使用服务器地址并跳过证书选项。 |
 | `--auto-cert y\|n` | 有域名时设置是否申请 HTTPS 证书。交互默认值为 `y`。 |
 | `--acme-provider letsencrypt\|zerossl` | 选择证书提供商。直接回车接受 Let’s Encrypt。无人值守时省略此项也使用 Let’s Encrypt。 |
@@ -57,6 +58,19 @@ sudo bash deploy/install.sh --repository lwl0820/lpanel \
 使用 ZeroSSL 无人值守安装时，在证书参数中加上 `--acme-provider zerossl --acme-eab-file /服务器路径/zerossl-eab`。先从 ZeroSSL 获取凭据并写入仅管理员可读取的文件。发行包须支持 ZeroSSL。
 
 使用 `--password` 时，安装运行期间进程列表可能显示密码。若直接键入密码，终端历史也可能记录它。脚本通过标准输入将密码交给面板初始化。手动安装时可省略该参数，使用隐藏输入。
+
+## 专用登录入口
+
+安装时可指定 `--login-path /abcdef`，也可在提示时填写。路径以 `/` 开头，每一段可用英文字母、数字、短横线和下划线。`/api`、`/assets` 及其子路径供系统使用。留空或填 `/` 时，从根地址登录。
+
+安装完成后会显示完整登录地址，例如 `https://panel.example.com:8443/abcdef`。启用专用入口时，路径区分大小写，末尾无需加 `/`。未登录访问其他地址会收到 404。登录后可以照常打开和刷新面板页面。
+
+登录后，在「面板设置」的访问设置中可以更改或清除登录路径，并复制新的登录地址。如果忘记路径，可在服务器上用 `sudoedit /opt/lpanel/data/config.json` 查看 `login_path`。要恢复从根地址登录，将其设为空字符串 `""`，保存后执行以下命令。
+
+```bash
+sudo /opt/lpanel/current/lpanel setup-nginx --root /opt/lpanel
+sudo systemctl restart lpanel.service
+```
 
 ## 域名与 HTTPS
 

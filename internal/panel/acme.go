@@ -322,6 +322,9 @@ func (a *App) importLegacyACMEAccount() error {
 func (a *App) saveLegacyAccessConfig(ctx context.Context, config Config) error {
 	a.domainsMu.Lock()
 	defer a.domainsMu.Unlock()
+	current := a.currentConfig()
+	current.ACMEEmail, current.ACMEServer, current.AgreeTOS = config.ACMEEmail, config.ACMEServer, config.AgreeTOS
+	config = current
 	tx, err := a.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -359,7 +362,7 @@ func (a *App) saveLegacyAccessConfig(ctx context.Context, config Config) error {
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	a.Config = config
+	a.setConfig(config)
 	return nil
 }
 

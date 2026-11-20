@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { projects, type Project } from '../projects-api'
 import { sites, type Site } from '../sites-api'
-import { domains, type Access, type Binding } from '../domain-api'
+import { domains, panelLoginURL, type Access, type Binding } from '../domain-api'
 import { upgrades, type UpgradeState } from '../upgrade-api'
 import { certState, overviewTodos } from '../cert'
 import { useOperation } from '../useOperation'
@@ -43,7 +43,7 @@ const stats = computed(() => {
   ]
 })
 const fresh = computed(() => !!data.value && !data.value.projects.length && !data.value.sites.length)
-const url = computed(() => data.value ? `${data.value.access.https ? 'https' : 'http'}://${data.value.access.panel_domain || window.location.hostname}:${data.value.access.panel_port}` : '')
+const url = computed(() => data.value ? panelLoginURL(data.value.access) : '')
 const certificateDialog = ref(false)
 const certificateBinding = ref<Binding | null>(null)
 function certificate(b: Binding) {
@@ -87,7 +87,7 @@ async function certificateDone({ binding, operation }: CertificateRequestResult)
         <div class="panel-h"><h2>面板访问</h2></div>
         <div class="panel-b">
           <dl class="kv">
-            <dt>访问地址</dt><dd class="mono">{{ url }}</dd>
+            <dt>登录地址</dt><dd class="mono">{{ url }}</dd>
             <dt>HTTPS</dt><dd><span :class="['pill', data.access.https ? 'ok' : 'idle']">{{ data.access.https ? '已启用' : '未启用' }}</span></dd>
             <dt>证书账户</dt><dd><RouterLink to="/domains/acme-accounts" class="link">管理证书账户</RouterLink></dd>
             <dt>版本</dt><dd>{{ data.upgrade.current }}</dd>

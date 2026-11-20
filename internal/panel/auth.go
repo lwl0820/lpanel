@@ -56,23 +56,28 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 500, "session_error", "保存会话失败")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "lpanel_session", Value: token, Path: "/", HttpOnly: true, Secure: a.Config.HTTPS, SameSite: http.SameSiteLaxMode, Expires: expires, MaxAge: 86400})
+	http.SetCookie(w, &http.Cookie{Name: "lpanel_session", Value: token, Path: "/", HttpOnly: true, Secure: a.currentConfig().HTTPS, SameSite: http.SameSiteLaxMode, Expires: expires, MaxAge: 86400})
 	WriteJSON(w, 200, map[string]string{"username": input.Username})
 }
 func (a *App) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("lpanel_session")
-		if err != nil {
-			WriteError(w, 401, "unauthorized", "请先登录")
-			return
-		}
-		var expires int64
-		if err = a.DB.QueryRowContext(r.Context(), "SELECT expires_at FROM sessions WHERE token=?", cookie.Value).Scan(&expires); err != nil || expires <= time.Now().Unix() {
-			WriteError(w, 401, "unauthorized", "登录已过期，请重新登录")
+		if message := a.sessionError(r); message != "" {
+			WriteError(w, 401, "unauthorized", message)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+func (a *App) sessionError(r *http.Request) string {
+	cookie, err := r.Cookie("lpanel_session")
+	if err != nil {
+		return "请先登录"
+	}
+	var expires int64
+	if err = a.DB.QueryRowContext(r.Context(), "SELECT expires_at FROM sessions WHERE token=?", cookie.Value).Scan(&expires); err != nil || expires <= time.Now().Unix() {
+		return "登录已过期，请重新登录"
+	}
+	return ""
 }
 func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 	cookie, _ := r.Cookie("lpanel_session")
@@ -80,7 +85,7 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 500, "session_error", "退出登录失败")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "lpanel_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: a.Config.HTTPS, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: "lpanel_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: a.currentConfig().HTTPS, SameSite: http.SameSiteLaxMode})
 	WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 func (a *App) me(w http.ResponseWriter, r *http.Request) {

@@ -4,7 +4,9 @@
 适用于 web/src/api.ts、App.vue 及后续业务页面。规范仅描述已有 Vue 3、TypeScript、Element Plus 基础，不承诺尚未完成的模块。
 
 ## 2. 签名
-request<T>(path: string, options?: RequestInit): Promise<T> 统一调用 /api/v1；auth.me/login/logout 对应后端账号接口。APIError 保存 status、code、message，页面显示中文 message。
+`request<T>(path, options?)` 默认调用 `/api/v1`。`auth.me`、`auth.login` 与 `auth.logout` 对应后端账号接口。启用入口时，`auth.login` 用登录页提供的同源路径提交。`APIError` 保存 `status`、`code` 和 `message`，页面显示中文 `message`。
+
+访问设置返回 `login_path`。`PUT /api/v1/system/access/login-path` 提交 `{"login_path":"/abcdef"}`，并用返回的配置刷新完整登录地址。空值表示根地址。
 
 `sites.create` 提交网站字段及可选 `binding`，返回网站、可选绑定与证书操作。`sites.update` 继续使用原网站字段。
 
@@ -18,19 +20,21 @@ request<T>(path: string, options?: RequestInit): Promise<T> 统一调用 /api/v1
 共用账户选择优先预选当前证书的签发账户，新申请预选默认账户。没有默认账户时提示前往「ACME 账户管理」添加账户。账户绑定密钥在表单中以密码输入处理，列表、编辑初始值和账户响应中均不回显。
 
 ## 4. 校验与错误矩阵
-未登录返回 401 后显示登录页；网络或其他服务错误显示中文错误，不能当成已登录或操作成功。网络连接失败使用 APIError(0, network_error)，Nginx 返回 HTML 等非 JSON 内容使用 invalid_response 并保留 HTTP 状态。表单提交期间显示 loading，成功后清理密码。长操作需等待操作结果再显示成功，不能把请求提交成功当成完成。
+常规模式下，未登录返回 401 后显示登录页。定制登录页由服务端注入 `lpanel-login-path` 元数据，只有存在该标记的页面才将 `/auth/me` 的 404 当作待登录，普通匿名访问在 Nginx 和 Go 侧直接返回 404。网络或其他服务错误显示中文错误，不能当成已登录或操作成功。网络连接失败使用 `APIError(0, network_error)`，Nginx 返回 HTML 等非 JSON 内容使用 `invalid_response` 并保留 HTTP 状态。表单提交期间显示 loading，成功后清理密码。长操作需等待操作结果再显示成功，不能把请求提交成功当成完成。
 
 建站时绑定校验或生效失败，在弹窗保留填写项。返回 `201` 且带 `certificate_error` 时，显示已创建的 HTTP 网站和重试说明；后台操作失败通过 `OperationBanner` 显示原因，并提供域名与证书入口。
 
 账户删除返回 `409` 时显示接口原因，并保留列表中的默认标记。申请失败时继续显示原证书和原账户，切换成功并刷新后显示新账户。
 
 ## 5. 正常、基础与失败案例
-正常：登录后显示真实管理员与版本；退出回到登录页。
+正常：登录后显示真实管理员与版本。定制入口登录成功后访问 `/`，站内路由直接使用原路径。退出时重新请求 `/`，由服务端决定显示常规登录页或返回 404。
 基础：列表为空使用空状态，不能填充虚构项目或统计值。
 失败：APIError 中文消息可见；不在产品页面显示内部需求、任务阶段或实现说明。
 
 ## 6. 必需测试
 web/src/api.test.ts 验证请求、结构化错误、Nginx HTML 错误页和网络中断。Element Plus 在 main.ts 设置 zhCn locale，包含内建按钮和辅助文字。业务页接入时对关键错误/操作状态做有意义测试；运行 npm --prefix web run typecheck、lint、test -- --run、build。测试缓存和其他临时产物放仓库 .tmp；构建 dist 为忽略的正式构建产物。
+
+登录相关测试覆盖旧登录接口、定制入口提交地址及首屏路由保持。浏览器验收同时核对更新后的完整登录地址与普通页面访问。
 
 ## 7. 错误与正确用法
 错误：在每个页面重复 fetch 和错误解析，或者显示假数据让空页面看起来已完成。

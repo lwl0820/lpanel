@@ -15,9 +15,14 @@ if [[ "$1" == bind-panel && "${2:-}" == --help ]]; then
   if [[ "${LEGACY_RELEASE:-0}" != 1 ]]; then printf '%s\n' '  -acme-eab-file string'; fi
   exit 0
 fi
+if [[ "$1" == init && "${2:-}" == --help ]]; then
+  if [[ "${LEGACY_RELEASE:-0}" != 1 ]]; then printf '%s\n' '  -login-path string'; fi
+  exit 0
+fi
 printf '%s\n' "$*" >> /opt/lpanel/.tmp/cli-arguments
 case "$1" in
   init)
+    if [[ "${LEGACY_RELEASE:-0}" == 1 && " $* " == *' --login-path '* ]]; then exit 9; fi
     IFS= read -r password
     [[ "$password" == "${EXPECTED_PASSWORD:-test-password}" ]] || exit 9
     mkdir -p /opt/lpanel/data
@@ -37,10 +42,14 @@ case "$1" in
 esac
 SH
 chmod 755 "$fixture/package/lpanel"
-for command in docker apt-get systemctl; do
+for command in docker systemctl; do
   printf '#!/bin/sh\nexit 0\n' > "$fixture/bin/$command"
   chmod 755 "$fixture/bin/$command"
 done
+cat > "$fixture/bin/apt-get" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >> /opt/lpanel/.tmp/apt-arguments
+SH
 cat > "$fixture/bin/curl" <<'SH'
 #!/bin/sh
 printf '%s\n' "$*" >> /opt/lpanel/.tmp/curl-arguments
@@ -49,7 +58,10 @@ if [ "${RETRY_HEALTH:-0}" = 1 ] && [ ! -e /opt/lpanel/.tmp/health-retried ]; the
   case " $* " in *' -fsS '*) echo 'curl: (7) 测试连接失败' >&2 ;; esac
   exit 7
 fi
-printf '{"status":"ok","version":"v0.1.0"}\n'
+case " $* " in
+  *' -w %{http_code} '*) printf '200' ;;
+  *) printf '{"status":"ok","version":"v0.1.0"}\n' ;;
+esac
 SH
 cat > "$fixture/bin/hostname" <<'SH'
 #!/bin/sh
@@ -61,7 +73,7 @@ cat > "$fixture/bin/ss" <<'SH'
 [ "${PORT_CONFLICT:-0}" != 1 ] || echo 'LISTEN 0 128 0.0.0.0:8443'
 exit 0
 SH
-chmod 755 "$fixture/bin/curl" "$fixture/bin/ss"
+chmod 755 "$fixture/bin/apt-get" "$fixture/bin/curl" "$fixture/bin/ss"
 case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; *) echo '测试架构不支持' >&2; exit 1 ;; esac
 archive="lpanel_v0.1.0_linux_${arch}.tar.gz"
 tar -czf "$fixture/$archive" -C "$fixture/package" lpanel web deploy
@@ -96,7 +108,7 @@ rm /etc/nginx/nginx.conf
 if printf 'admin\ntest-password\ntest-password\n8443\n' | PORT_CONFLICT=1 bash /source/deploy/install.sh --archive "$archive" > /work/.tmp/port-result 2>&1; then exit 13; fi
 grep -q '已被占用' /work/.tmp/port-result
 [[ ! -e /opt/lpanel/data/config.json ]]
-# 使用伪终端选择证书默认值，签发失败时保留 HTTP。
+# 使用伪终端选择证书默认值，签发失败时保留自定义登录路径。
 FAIL_CERT=1 python3 - "$archive" > /work/.tmp/cert-result 2>&1 <<'PY'
 import os
 import pty
@@ -109,24 +121,27 @@ try:
         "bash", "/source/deploy/install.sh", "--archive", sys.argv[1],
         "--password", "test-password", "--port", "8443",
     ], stdin=terminal)
-    os.write(master, b"mixed-admin\nPANEL.example.com\n\n\n\n\n")
+    os.write(master, b"mixed-admin\nPANEL.example.com\n\n\n\n\n/recovery/entry\n")
     sys.exit(process.wait(timeout=60))
 finally:
     os.close(terminal)
     os.close(master)
 PY
 grep -q '证书提供商.*\[letsencrypt\]' /work/.tmp/cert-result
+grep -q '面板登录路径' /work/.tmp/cert-result
 grep -q '证书未启用' /work/.tmp/cert-result
-grep -q '访问地址：http://192.0.2.10:8443' /work/.tmp/cert-result
-grep -q 'http://127\.0\.0\.1:8443/api/v1/health$' /opt/lpanel/.tmp/curl-arguments
+grep -Fxq '面板安装完成，访问地址：http://192.0.2.10:8443/recovery/entry' /work/.tmp/cert-result
+grep -q 'http://127\.0\.0\.1:18080/api/v1/health$' /opt/lpanel/.tmp/curl-arguments
+grep -q 'http://127\.0\.0\.1:8443/recovery/entry$' /opt/lpanel/.tmp/curl-arguments
 if grep -q '访问地址：https://' /work/.tmp/cert-result; then exit 18; fi
 [[ -f /opt/lpanel/data/config.json ]]
 grep -q -- '--username mixed-admin --port 8443' /opt/lpanel/.tmp/cli-arguments
+grep -q -- '--login-path /recovery/entry$' /opt/lpanel/.tmp/cli-arguments
 grep -Fxq -- 'bind-panel --root /opt/lpanel --domain panel.example.com --auto-cert --agree-tos --email acme@panel.example.com' /opt/lpanel/.tmp/cli-arguments
 rm -rf /opt/lpanel
 # 自定义端口用于健康检查，首次探测失败后安静重试。关闭标准输入并保留密码原文。
 cli_password=' leading $pass\!?# '
-RETRY_HEALTH=1 EXPECTED_PASSWORD="$cli_password" bash /source/deploy/install.sh \
+LEGACY_RELEASE=1 RETRY_HEALTH=1 EXPECTED_PASSWORD="$cli_password" bash /source/deploy/install.sh \
   --archive "$archive" --username cli-admin --password "$cli_password" --port 09443 --domain '' \
   </dev/null > /work/.tmp/cli-http-result 2>&1
 grep -q '访问地址：http://192.0.2.10:9443' /work/.tmp/cli-http-result
@@ -142,11 +157,26 @@ if bash /source/deploy/install.sh --archive "$archive" --username cli-admin --pa
 grep -q '缺少证书联系邮箱' /work/.tmp/eof-result
 [[ ! -e /opt/lpanel ]]
 bash /source/deploy/install.sh --archive "$archive" --username cli-admin --password test-password \
-  --port 8443 --domain panel.example.com --auto-cert y --agree-tos --email '' \
+  --port 8443 --domain panel.example.com --auto-cert y --agree-tos --email '' --login-path '' \
   </dev/null > /work/.tmp/cli-https-result 2>&1
 grep -q '访问地址：https://panel.example.com:8443' /work/.tmp/cli-https-result
 grep -q -- '--resolve panel\.example\.com:8443:127\.0\.0\.1 https://panel\.example\.com:8443/api/v1/health$' /opt/lpanel/.tmp/curl-arguments
 grep -Fxq -- 'bind-panel --root /opt/lpanel --domain panel.example.com --auto-cert --agree-tos --email ' /opt/lpanel/.tmp/cli-arguments
+rm -rf /opt/lpanel
+# 定制路径要求新版发行包。拒绝旧包时尚未安装 Nginx，随后可以用新版重试。
+entry_args=(--archive "$archive" --username cli-admin --password test-password --port 8443
+  --domain panel.example.com --auto-cert y --agree-tos --email '')
+if bash /source/deploy/install.sh "${entry_args[@]}" --login-path /api/login </dev/null > /work/.tmp/invalid-login-path 2>&1; then exit 22; fi
+grep -q '该登录路径已被系统使用' /work/.tmp/invalid-login-path
+[[ ! -e /opt/lpanel ]]
+if LEGACY_RELEASE=1 bash /source/deploy/install.sh "${entry_args[@]}" --login-path /private-panel </dev/null > /work/.tmp/legacy-login-path 2>&1; then exit 23; fi
+grep -q '当前发行包暂不支持自定义登录路径' /work/.tmp/legacy-login-path
+[[ ! -e /opt/lpanel/current && ! -e /opt/lpanel/data/config.json ]]
+if grep -q 'nginx' /opt/lpanel/.tmp/apt-arguments; then exit 24; fi
+bash /source/deploy/install.sh "${entry_args[@]}" --login-path /private-panel </dev/null > /work/.tmp/custom-https 2>&1
+grep -Fxq '面板安装完成，访问地址：https://panel.example.com:8443/private-panel' /work/.tmp/custom-https
+grep -q 'http://127\.0\.0\.1:18080/api/v1/health$' /opt/lpanel/.tmp/curl-arguments
+grep -Fq -- '--resolve panel.example.com:8443:127.0.0.1 -o /dev/null -w %{http_code} https://panel.example.com:8443/private-panel' /opt/lpanel/.tmp/curl-arguments
 rm -rf /opt/lpanel
 # ZeroSSL 使用私有文件传递凭据，公开发行仍可用旧二进制完成 Let’s Encrypt 安装。
 printf '%s\r\n' test-zerossl-key-id test-zerossl-hmac-key > /work/.tmp/zerossl-eab
@@ -167,5 +197,5 @@ grep -q -- '--password 缺少参数值' /work/.tmp/missing-value-result
 if bash /source/deploy/install.sh --username cli-admin --password '' </dev/null > /work/.tmp/empty-password-result 2>&1; then exit 17; fi
 grep -q '密码长度须为 8 至 72 字节' /work/.tmp/empty-password-result
 [[ ! -e /opt/lpanel ]]
-echo '安装脚本分支验证通过，覆盖交互、混合输入、无人值守、凭据传递、发行包兼容、重跑保护、端口冲突和证书失败回退。'
+echo '安装脚本分支验证通过，覆盖交互、无人值守、登录路径、凭据传递、发行包兼容、重跑保护、端口冲突和证书失败回退。'
 SH

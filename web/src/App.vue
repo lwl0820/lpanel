@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { onMounted, ref, watchEffect } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { APIError, auth, type User } from './api'
 import { LOGIN_TITLE, pageTitle } from './router'
 import AppIcon from './components/AppIcon.vue'
 import LoginCard from './components/LoginCard.vue'
 import type { IconName } from './icons'
+const props = defineProps<{ loginPath: string }>()
 const route = useRoute()
-const router = useRouter()
 const user = ref<User | null>(null)
 const loading = ref(true)
 const submitting = ref(false)
@@ -16,14 +16,40 @@ const error = ref('')
 const navigation: { path: string; label: string; icon: IconName }[] = [ { path: '/', label: '概览', icon: 'overview' }, { path: '/projects', label: '容器项目', icon: 'projects' }, { path: '/sites', label: '静态网站', icon: 'sites' }, { path: '/domains', label: '域名与证书', icon: 'domains' }, { path: '/settings', label: '面板设置', icon: 'settings' } ]
 watchEffect(() => { document.title = user.value ? pageTitle(route) : LOGIN_TITLE })
 onMounted(async () => {
-  try { user.value = await auth.me() } catch (e) { if (!(e instanceof APIError && e.status === 401)) error.value = e instanceof Error ? e.message : '连接服务器失败' } finally { loading.value = false }
+  try {
+    const currentUser = await auth.me()
+    if (props.loginPath) {
+      window.location.replace('/')
+      return
+    }
+    user.value = currentUser
+  } catch (e) {
+    const guest = e instanceof APIError && (e.status === 401 || (props.loginPath && e.status === 404))
+    if (!guest) error.value = e instanceof Error ? e.message : '连接服务器失败'
+  }
+  loading.value = false
 })
 async function login(username: string, password: string) {
   if (!username || !password) { error.value = '请输入管理员账号和密码'; return }
   submitting.value = true; error.value = ''
-  try { user.value = await auth.login(username, password) } catch (e) { error.value = e instanceof Error ? e.message : '登录失败' } finally { submitting.value = false }
+  try {
+    const currentUser = await auth.login(username, password, props.loginPath)
+    if (props.loginPath) {
+      window.location.replace('/')
+      return
+    }
+    user.value = currentUser
+  } catch (e) { error.value = e instanceof Error ? e.message : '登录失败' } finally { submitting.value = false }
 }
-async function logout() { try { await auth.logout(); user.value = null; await router.replace('/') } catch (e) { ElMessage.error(e instanceof Error ? e.message : '退出失败') } }
+async function logout() {
+  try { await auth.logout() } catch (e) {
+    if (!(e instanceof APIError && (e.status === 401 || e.status === 404))) {
+      ElMessage.error(e instanceof Error ? e.message : '退出失败')
+      return
+    }
+  }
+  window.location.replace('/')
+}
 </script>
 <template>
   <div v-if="loading" class="loading-screen" role="status"><span class="spin"></span>正在连接面板…</div>

@@ -35,6 +35,7 @@ func run() error {
 	username := flags.String("username", "admin", "管理员账号")
 	port := flags.Int("port", 8443, "面板端口")
 	listen := flags.String("listen", "127.0.0.1:18080", "后端回环地址")
+	loginPath := flags.String("login-path", "", "面板登录路径，留空通过根地址登录")
 	domain := flags.String("domain", "", "面板域名")
 	autoCert := flags.Bool("auto-cert", false, "自动申请证书")
 	agreeTOS := flags.Bool("agree-tos", false, "同意证书服务条款")
@@ -59,6 +60,7 @@ func run() error {
 		config := panel.DefaultConfig()
 		config.PanelPort = *port
 		config.Listen = *listen
+		config.LoginPath = *loginPath
 		config.ReleaseRepository = *repository
 		if *port < 1 || *port > 65535 {
 			return fmt.Errorf("端口无效")
@@ -160,7 +162,7 @@ func run() error {
 				binding = item
 			}
 		}
-		fmt.Printf("面板访问地址：%s\n", app.BindingURL(binding))
+		fmt.Printf("面板访问地址：%s%s\n", app.BindingURL(binding), app.Config.LoginPath)
 		return nil
 	case "serve":
 		app, err := panel.Open(*root, version)

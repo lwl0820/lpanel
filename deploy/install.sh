@@ -8,10 +8,10 @@ ask() {
   printf -v "$target" '%s' "${answer:-$default}"
 }
 # 按变量是否设置区分省略参数和显式空值。
-unset repository archive username password panel_port domain auto_cert agree_tos email acme_provider acme_eab_file eab_kid eab_hmac_key
+unset repository archive username password panel_port domain login_path auto_cert agree_tos email acme_provider acme_eab_file eab_kid eab_hmac_key
 while (($#)); do
   case "$1" in
-    --repository|--archive|--username|--password|--port|--domain|--auto-cert|--email|--acme-provider|--acme-eab-file)
+    --repository|--archive|--username|--password|--port|--domain|--login-path|--auto-cert|--email|--acme-provider|--acme-eab-file)
       (($# >= 2)) && [[ "$2" != --* ]] || fail "$1 缺少参数值"
       case "$1" in
         --repository) repository="$2" ;;
@@ -20,6 +20,7 @@ while (($#)); do
         --password) password="$2" ;;
         --port) panel_port="$2" ;;
         --domain) domain="$2" ;;
+        --login-path) login_path="$2" ;;
         --auto-cert) auto_cert="$2" ;;
         --email) email="$2" ;;
         --acme-provider) acme_provider="$2" ;;
@@ -38,6 +39,7 @@ while (($#)); do
   --password <密码>         管理员密码。以 -- 开头时使用 --password=<密码>
   --port <端口>             面板端口
   --domain <域名>           面板域名。传入空串使用服务器地址
+  --login-path <路径>       面板登录路径，例如 /abcdef。留空使用根地址
   --auto-cert <y或n>        有域名时是否自动申请 HTTPS 证书。交互默认 y
   --acme-provider <名称>    证书提供商，letsencrypt（默认）或 zerossl
   --agree-tos               同意证书服务条款。交互默认 y
@@ -141,6 +143,15 @@ if [[ "$auto_cert" == y ]]; then
       fail '请提供完整的 ZeroSSL Key ID 和 HMAC 密钥'
   fi
 fi
+if [[ ! -v login_path && -t 0 ]]; then
+  ask login_path '面板登录路径（如 /abcdef，留空使用根地址）' ''
+fi
+login_path="${login_path-}"
+if [[ "$login_path" == / ]]; then login_path=''; fi
+if [[ -n "$login_path" ]]; then
+  [[ "$login_path" =~ ^(/[a-zA-Z0-9_-]+)+$ ]] || fail '登录路径须以 / 开头，路径各段可使用英文字母、数字、短横线和下划线，例如 /abcdef'
+  case "$login_path" in /api|/api/*|/assets|/assets/*) fail '该登录路径已被系统使用，请填写其他路径' ;; esac
+fi
 if [[ ! -v repository && -n "${LPANEL_REPOSITORY:-}" ]]; then
   repository="$LPANEL_REPOSITORY"
 fi
@@ -176,18 +187,7 @@ work="$(mktemp -d "$TMPDIR/install-XXXXXXXX")"
 trap 'unset password eab_kid eab_hmac_key; rm -rf -- "$work"' EXIT
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl gnupg python3 nginx certbot
-if [[ "$install_docker" == y ]]; then
-  install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o "$work/docker.asc"
-  install -m 0644 "$work/docker.asc" /etc/apt/keyrings/lpanel-docker.asc
-  printf 'deb [arch=%s signed-by=/etc/apt/keyrings/lpanel-docker.asc] https://download.docker.com/linux/%s %s stable\n' "$(dpkg --print-architecture)" "$ID" "$VERSION_CODENAME" > /etc/apt/sources.list.d/lpanel-docker.list
-  apt-get update
-  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  systemctl enable --now docker.service
-fi
-docker info >/dev/null 2>&1 || fail 'Docker 服务不可用'
-docker compose version >/dev/null 2>&1 || fail 'Compose 插件不可用'
+apt-get install -y ca-certificates curl python3
 if [[ -z "$archive" ]]; then
   curl -fsSL "https://api.github.com/repos/$repository/releases/latest" -o "$work/release.json"
   version="$(python3 - "$work/release.json" <<'PY'
@@ -233,6 +233,12 @@ for file in lpanel web/index.html deploy/lpanel.service deploy/lpanel-renew.serv
 done
 chmod 755 "$work/release/lpanel"
 [[ "$("$work/release/lpanel" version)" == "$version" ]] || fail '程序版本与发行标签不一致'
+init_args=(init --root "$root" --username "$username" --port "$panel_port" --listen 127.0.0.1:18080 --repository "$repository")
+if [[ -n "$login_path" ]]; then
+  init_help="$("$work/release/lpanel" init --help 2>&1 || true)"
+  [[ "$init_help" == *'-login-path '* ]] || fail '当前发行包暂不支持自定义登录路径，请更换发行包或留空使用根地址'
+  init_args+=(--login-path "$login_path")
+fi
 if [[ "$auto_cert" == y && "$acme_provider" == zerossl ]]; then
   bind_help="$("$work/release/lpanel" bind-panel --help 2>&1 || true)"
   [[ "$bind_help" == *'-acme-eab-file '* ]] || fail '当前发行包暂不支持 ZeroSSL，请使用支持 ZeroSSL 的发行包，或选择 Let’s Encrypt'
@@ -240,9 +246,22 @@ if [[ "$auto_cert" == y && "$acme_provider" == zerossl ]]; then
   unset eab_kid eab_hmac_key
 fi
 [[ ! -e "$root/releases/$version" && ! -e "$root/current" ]] || fail '已有版本目录，请检查上次安装结果后重试'
+# 先确认发行包支持所选功能，失败时可直接换包重试。
+apt-get install -y gnupg nginx certbot
+if [[ "$install_docker" == y ]]; then
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o "$work/docker.asc"
+  install -m 0644 "$work/docker.asc" /etc/apt/keyrings/lpanel-docker.asc
+  printf 'deb [arch=%s signed-by=/etc/apt/keyrings/lpanel-docker.asc] https://download.docker.com/linux/%s %s stable\n' "$(dpkg --print-architecture)" "$ID" "$VERSION_CODENAME" > /etc/apt/sources.list.d/lpanel-docker.list
+  apt-get update
+  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  systemctl enable --now docker.service
+fi
+docker info >/dev/null 2>&1 || fail 'Docker 服务不可用'
+docker compose version >/dev/null 2>&1 || fail 'Compose 插件不可用'
 mv "$work/release" "$root/releases/$version"
 ln -s "$root/releases/$version" "$root/current"
-printf '%s\n' "$password" | "$root/current/lpanel" init --root "$root" --username "$username" --port "$panel_port" --listen 127.0.0.1:18080 --repository "$repository"
+printf '%s\n' "$password" | "$root/current/lpanel" "${init_args[@]}"
 unset password
 install -m 0644 "$root/current/deploy/lpanel.service" /etc/systemd/system/lpanel.service
 install -m 0644 "$root/current/deploy/lpanel-renew.service" /etc/systemd/system/lpanel-renew.service
@@ -279,12 +298,19 @@ if [[ -n "$domain" ]]; then
 fi
 probe_url="http://127.0.0.1:$panel_port"
 probe_args=(--noproxy '*' --max-time 2)
+health_args=("${probe_args[@]}")
 if [[ -n "$domain" && "$certificate_failed" != y ]]; then
   probe_url="$url"
   probe_args+=(--resolve "$domain:$panel_port:127.0.0.1")
 fi
+if [[ -n "$login_path" ]]; then
+  health_url='http://127.0.0.1:18080/api/v1/health'
+else
+  health_url="$probe_url/api/v1/health"
+  health_args=("${probe_args[@]}")
+fi
 for attempt in {1..15}; do
-  if curl -fs "${probe_args[@]}" "$probe_url/api/v1/health" > "$work/health.json"; then break; fi
+  if curl -fs "${health_args[@]}" "$health_url" > "$work/health.json"; then break; fi
   ((attempt < 15)) || fail '面板健康检查超时，请运行 sudo journalctl -u lpanel.service -u nginx.service -n 50 查看服务日志'
   sleep 1
 done
@@ -294,6 +320,6 @@ state=json.load(open(sys.argv[1]))
 if state.get('status')!='ok' or state.get('version')!=sys.argv[2]: raise SystemExit(1)
 PY
 systemctl is-active --quiet nginx.service lpanel.service || fail '面板或 Nginx 服务未正常运行'
-curl -fsS "${probe_args[@]}" "$probe_url" > /dev/null || fail 'Nginx 面板入口验证失败，请检查服务日志'
-echo "面板安装完成，访问地址：$url"
+status="$(curl -fsS "${probe_args[@]}" -o /dev/null -w '%{http_code}' "$probe_url$login_path")" && [[ "$status" == 200 ]] || fail 'Nginx 面板入口验证失败，请检查服务日志'
+echo "面板安装完成，访问地址：$url$login_path"
 [[ "$certificate_failed" != y ]] || echo '证书未启用，HTTP 安装已完成，HTTPS 仍需重试。'
