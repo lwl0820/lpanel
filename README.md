@@ -80,10 +80,10 @@ bash lpanel-install.sh --repository lwl0820/lpanel --username admin --port 8443
 
 ## 在线卸载
 
-在安装了 LPanel 的服务器上运行：
+在安装了 LPanel 的服务器上，以 root 用户运行以下命令。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lwl0820/lpanel/main/deploy/uninstall.sh -o lpanel-uninstall.sh && sudo bash lpanel-uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/lwl0820/lpanel/main/deploy/uninstall.sh -o lpanel-uninstall.sh && bash lpanel-uninstall.sh
 ```
 
 默认仅卸载面板，Compose 项目继续运行。也可选择同时删除面板登记的项目、容器和项目目录，包括目录内的相对路径挂载数据。卸载后，由面板配置的域名访问入口会停用。删除和保留的内容见[卸载说明](docs/install.md#卸载)。
