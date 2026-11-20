@@ -1,0 +1,30 @@
+{
+  "id": "install-cli-options",
+  "name": "install-cli-options",
+  "title": "安装脚本支持命令行配置",
+  "description": "允许通过命令行提供安装配置，仅交互询问当前安装场景所需的缺项",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lwl0820",
+  "assignee": "lwl0820",
+  "createdAt": "2026-11-20",
+  "completedAt": "2026-11-20",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "dbcc65d5e06ba430c7ca9cf69b96fbde19606522",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "implementation_status": "命令行配置、缺项交互和直接传入密码已实现，安装说明与项目规范已更新。",
+    "local_validation": "Bash 语法及帮助检查通过。同一安装冒烟脚本在无网络本地命名空间通过，系统服务和证书使用替身。",
+    "manual_acceptance": "公网 HTTPS 安装按 docs/validation.md 的人工验收清单在目标服务器验证。"
+  }
+}
