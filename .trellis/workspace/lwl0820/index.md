@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
-- **Last Active**: 2026-11-20
+- **Total Sessions**: 13
+- **Last Active**: 2026-11-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~363 | Active |
+| `journal-1.md` | ~399 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-11-21 | 新建 Compose 项目后自动部署 | `2b0d30d` | `main` |
 | 12 | 2026-11-20 | 完善静态网站创建与备注编辑 | `4e5b4dc` | `main` |
 | 11 | 2026-11-20 | 支持面板专用登录入口 | `c53c396` | `main` |
 | 10 | 2026-11-20 | 支持多个 ACME 证书账户 | `b7d953c` | `main` |

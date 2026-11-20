@@ -361,3 +361,39 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: 新建 Compose 项目后自动部署
+<!-- trellis-session: v=2 fp=fae97fc363539a73 -->
+
+**Date**: 2026-11-21
+**Task**: 新建 Compose 项目后自动部署
+**Branch**: `main`
+
+### Summary
+
+新建项目点击「创建」即自动部署，列表显示进度和结果；部署失败保留项目，可修改配置后重试。
+
+### Main Changes
+
+- 复用现有后台部署操作，创建接口返回部署任务，编辑配置仅保存。
+- 更新容器项目页面、接口契约和验收记录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2b0d30d` | feat: 新建 Compose 项目后自动部署 |
+
+### Testing
+
+- [OK] Go 项目定向测试、Go 静态检查、前端 ESLint、轮询测试及生产构建通过。
+- [OK] Chrome 隔离验收通过。配置由实际 Compose CLI 校验，容器启动使用命令替身。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 在运行 Docker 的测试服务器验收真实容器启动和发布端口访问。
