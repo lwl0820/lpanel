@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
-- **Last Active**: 2026-10-30
+- **Total Sessions**: 3
+- **Last Active**: 2026-11-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~68 | Active |
+| `journal-1.md` | ~99 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 3 | 2026-11-20 | 静态网站默认目录与创建时启用 HTTPS | `0876e972bf33443ae85950fac4967b77561e8a93` | `main` |
 | 2 | 2026-10-30 | 前端界面重新设计（浅色简洁 + vue-router） | `b18753e`, `9103590` | `feat/frontend-redesign` |
 | 1 | 2026-10-29 | 服务器管理面板首版实现与提交 | `7cfe897` | `codex/server-management-panel` |
 <!-- @@@/auto:session-history -->

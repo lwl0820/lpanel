@@ -66,3 +66,34 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 静态网站默认目录与创建时启用 HTTPS
+<!-- trellis-session: v=2 fp=2996721bab6ef8c1 -->
+
+**Date**: 2026-11-20
+**Task**: 静态网站默认目录与创建时启用 HTTPS
+**Branch**: `main`
+
+### Summary
+
+支持自动分配静态网站目录、指定已有目录，并在新建表单绑定域名和申请 HTTPS。证书申请失败保留 HTTP 入口。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0876e972bf33443ae85950fac4967b77561e8a93` | feat: 创建静态网站时自动分配目录并支持 HTTPS |
+
+### Testing
+
+- [OK] Go 相关测试和 vet、前端类型检查、ESLint、17 项相关前端测试及生产构建通过。
+- [OK] 隔离 Chrome 与 Nginx 联调通过，证书验证使用本地测试证书。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 在目标服务器验证公网证书签发。
