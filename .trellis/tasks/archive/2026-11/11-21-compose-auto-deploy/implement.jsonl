@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"复用容器项目现有部署流程与操作结果"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"核对后台操作启动失败和配置错误反馈"}
+{"file":".trellis/spec/frontend/api-contract.md","reason":"核对创建响应和页面状态"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"复用页面的后台操作轮询"}
