@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"核对 Compose 状态、项目删除和命名卷保留契约"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"落实日志脱敏和后台删除错误反馈"}
+{"file":".trellis/spec/frontend/api-contract.md","reason":"衔接项目状态、日志和操作请求"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"沿用表格、抽屉、窄屏卡片与删除确认风格"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"复用后台操作轮询和结果反馈"}

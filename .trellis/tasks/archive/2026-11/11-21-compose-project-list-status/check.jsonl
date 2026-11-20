@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核对单容器日志、文件清理和真实 Docker 的验证边界"}
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"校验删除顺序、命名卷、相对挂载目录和项目记录"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核对项目列表的宽窄屏、状态、日志与删除交互"}
+{"file":".trellis/spec/frontend/api-contract.md","reason":"校验响应兼容性及独立错误提示"}
