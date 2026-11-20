@@ -260,3 +260,30 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: 修复安装脚本的面板健康检查
+<!-- trellis-session: v=2 fp=e87e9a8adb427f0f -->
+
+**Date**: 2026-11-20
+**Task**: 修复安装脚本的面板健康检查
+**Branch**: `main`
+
+### Summary
+
+安装完成前通过 Nginx 的面板端口检查后端健康状态，连接失败时静默重试，持续失败时提示查看服务日志。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d306348a0a91b0292647082efc439d8e5a87e814` | fix: 修复安装脚本的面板健康检查 |
+
+### Testing
+
+- [OK] Bash 语法与差异检查通过。Docker 不可用，安装冒烟用例在隔离 Linux 命名空间中使用命令替身通过，覆盖自定义端口、首次失败后重试、HTTPS 入口和证书失败回退。
+- [OK] 另以命令替身验证持续探测失败以及返回无效响应时退出，真实服务器部署尚未验证。
+
+### Status
+
+[OK] **Completed**
