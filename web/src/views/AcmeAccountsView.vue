@@ -19,17 +19,26 @@ const saving = ref(false)
 const saveError = ref('')
 const formRef = ref<FormInstance>()
 const formId = useId()
+const emailHintId = useId()
+const eabFieldsId = useId()
 const eabHintId = useId()
+const manualZeroSSL = ref(false)
 const form = reactive({ name: '', provider: 'letsencrypt', email: '', agree_tos: false, eab_kid: '', eab_hmac_key: '' })
 const provider = computed(() => data.value?.providers.find(item => item.id === form.provider))
 const needsEab = computed(() => editing.value ? Boolean(editing.value.needs_eab) : Boolean(provider.value?.requires_eab))
+const zeroSSL = computed(() => form.provider === 'zerossl')
+const automaticZeroSSL = computed(() => needsEab.value && zeroSSL.value && !manualZeroSSL.value)
+const showCredentials = computed(() => needsEab.value && !automaticZeroSSL.value)
 const rules = computed<FormRules>(() => ({
   name: [{ required: true, whitespace: true, message: '请填写账户名称', trigger: 'blur' }],
   provider: [{ required: true, message: '请选择证书提供商', trigger: 'change' }],
-  email: [{ type: 'email', message: '请输入有效的联系邮箱', trigger: 'blur' }],
+  email: [
+    { required: automaticZeroSSL.value, message: '请填写联系邮箱', trigger: ['blur', 'change'] },
+    { type: 'email', message: '请输入有效的联系邮箱', trigger: 'blur' },
+  ],
   agree_tos: [{ validator: (_rule, value) => value === true, message: '请先阅读并同意证书服务条款', trigger: 'change' }],
-  eab_kid: needsEab.value ? [{ required: true, whitespace: true, message: '请填写密钥编号', trigger: 'blur' }] : [],
-  eab_hmac_key: needsEab.value ? [{ required: true, whitespace: true, message: '请填写绑定密钥', trigger: 'blur' }] : [],
+  eab_kid: [{ required: true, whitespace: true, message: '请填写密钥编号', trigger: ['blur', 'change'] }],
+  eab_hmac_key: [{ required: true, whitespace: true, message: '请填写绑定密钥', trigger: ['blur', 'change'] }],
 }))
 
 async function load() {
@@ -48,6 +57,7 @@ onMounted(load)
 function edit(account?: ACMEAccount) {
   editing.value = account ?? null
   saveError.value = ''
+  manualZeroSSL.value = false
   Object.assign(form, {
     name: account?.name ?? '',
     provider: account?.provider ?? 'letsencrypt',
@@ -60,6 +70,12 @@ function edit(account?: ACMEAccount) {
   open.value = true
 }
 
+function changeProvider() {
+  Object.assign(form, { agree_tos: false, eab_kid: '', eab_hmac_key: '' })
+  manualZeroSSL.value = false
+  formRef.value?.clearValidate(['provider', 'email', 'agree_tos', 'eab_kid', 'eab_hmac_key'])
+}
+
 async function submit() {
   if (saving.value || !await formRef.value?.validate().catch(() => false)) return
   saving.value = true
@@ -70,11 +86,13 @@ async function submit() {
       provider: form.provider,
       email: form.email.trim(),
       agree_tos: form.agree_tos,
-      ...(needsEab.value ? { eab_kid: form.eab_kid.trim(), eab_hmac_key: form.eab_hmac_key.trim() } : {}),
+      ...(showCredentials.value ? { eab_kid: form.eab_kid.trim(), eab_hmac_key: form.eab_hmac_key.trim() } : {}),
     })
     if (saved.needs_eab) {
+      saveError.value = automaticZeroSSL.value
+        ? '账户已保存，但 ZeroSSL 注册未完成。请核对邮箱后重试，或手动填写绑定凭据。'
+        : `账户已保存，但 ${saved.provider_name} 注册未完成。请核对绑定凭据和网络连接后重试。`
       editing.value = saved
-      saveError.value = '账户已添加，但暂未完成 ZeroSSL 注册。请核对绑定凭据，确认服务器可连接 ZeroSSL 后重试。'
     } else {
       ElMessage.success(editing.value ? '账户已保存' : '账户已添加')
       open.value = false
@@ -146,24 +164,33 @@ const menu = (account: ACMEAccount): MenuItem[] => [
       </el-form-item>
       <el-form-item v-if="editing" label="证书提供商">{{ editing.provider_name }}</el-form-item>
       <el-form-item v-else label="证书提供商" prop="provider">
-        <el-radio-group v-model="form.provider" name="provider" @change="form.agree_tos = false; form.eab_kid = ''; form.eab_hmac_key = ''; formRef?.clearValidate()">
-          <el-radio v-for="option in data?.providers" :key="option.id" :value="option.id">{{ option.name }}</el-radio>
-        </el-radio-group>
+        <el-select v-model="form.provider" name="provider" @change="changeProvider">
+          <el-option v-for="option in data?.providers" :key="option.id" :value="option.id" :label="option.name"/>
+        </el-select>
       </el-form-item>
-      <el-form-item label="联系邮箱（可选）" prop="email">
-        <el-input v-model.trim="form.email" name="email" type="email" autocomplete="email" autocapitalize="none" spellcheck="false"/>
+      <el-form-item :label="automaticZeroSSL ? '联系邮箱' : '联系邮箱（可选）'" prop="email">
+        <el-input v-model.trim="form.email" name="email" type="email" autocomplete="email" autocapitalize="none" spellcheck="false" :required="automaticZeroSSL" :aria-describedby="automaticZeroSSL ? emailHintId : undefined"/>
+        <span v-if="automaticZeroSSL" :id="emailHintId" class="hint">面板会将此邮箱发送给 ZeroSSL 以完成账户注册。</span>
       </el-form-item>
-      <template v-if="needsEab">
-        <p :id="eabHintId" class="hint">请从 <a class="link" href="https://app.zerossl.com/developer" target="_blank" rel="noopener">ZeroSSL 控制台</a> 的开发者设置获取账户绑定凭据。</p>
-        <el-form-item label="密钥编号（EAB Key ID）" prop="eab_kid">
-          <el-input v-model="form.eab_kid" name="eab_kid" :aria-describedby="eabHintId" autocapitalize="none" spellcheck="false" required/>
-        </el-form-item>
-        <el-form-item label="绑定密钥（EAB HMAC Key）" prop="eab_hmac_key">
-          <el-input v-model="form.eab_hmac_key" name="eab_hmac_key" :aria-describedby="eabHintId" type="password" autocomplete="new-password" required/>
-        </el-form-item>
-      </template>
+      <p v-if="needsEab && zeroSSL" class="hint">
+        <el-button link type="primary" native-type="button" :aria-expanded="manualZeroSSL" :aria-controls="eabFieldsId" @click="manualZeroSSL = !manualZeroSSL; formRef?.clearValidate('email')">
+          {{ manualZeroSSL ? '改用邮箱自动注册' : '手动填写绑定凭据' }}
+        </el-button>
+      </p>
+      <div v-if="needsEab" :id="eabFieldsId" :key="form.provider">
+        <template v-if="showCredentials">
+          <p v-if="zeroSSL" :id="eabHintId" class="hint">请从 <a class="link" href="https://app.zerossl.com/developer" target="_blank" rel="noopener">ZeroSSL 控制台</a> 的开发者设置获取账户绑定凭据。</p>
+          <p v-else :id="eabHintId" class="hint">请在你的 Google Cloud 项目中按<a class="link" href="https://docs.cloud.google.com/certificate-manager/docs/public-ca-tutorial" target="_blank" rel="noopener">官方指南</a>生成账户绑定凭据。</p>
+          <el-form-item label="密钥编号（EAB Key ID）" prop="eab_kid">
+            <el-input v-model="form.eab_kid" name="eab_kid" :aria-describedby="eabHintId" autocapitalize="none" spellcheck="false" required/>
+          </el-form-item>
+          <el-form-item label="绑定密钥（EAB HMAC Key）" prop="eab_hmac_key">
+            <el-input v-model="form.eab_hmac_key" name="eab_hmac_key" :aria-describedby="eabHintId" type="password" autocomplete="new-password" required/>
+          </el-form-item>
+        </template>
+      </div>
       <el-form-item prop="agree_tos">
-        <el-checkbox v-model="form.agree_tos" name="agree_tos">我同意证书服务条款</el-checkbox>
+        <el-checkbox v-model="form.agree_tos" name="agree_tos" :validate-event="false" @change="formRef?.clearValidate('agree_tos')">我同意证书服务条款</el-checkbox>
         <a v-if="provider" :href="provider.tos_url" target="_blank" rel="noopener" class="link">查看 {{ provider.name }} 服务条款</a>
       </el-form-item>
       <el-alert v-if="saveError" :title="saveError" type="error" :closable="false" show-icon/>

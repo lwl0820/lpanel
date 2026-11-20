@@ -25,6 +25,8 @@ type App struct {
 	Mux        *http.ServeMux
 	Command    func(context.Context, string, ...string) ([]byte, error)
 	NginxProbe func(context.Context, string, string, string) error
+
+	zeroSSLClient *http.Client
 }
 
 type APIError struct {
@@ -76,6 +78,7 @@ func Open(root, version string) (*App, error) {
 		return nil, err
 	}
 	a := &App{Root: root, Config: config, Version: version, DB: db, Mux: http.NewServeMux()}
+	a.zeroSSLClient = &http.Client{Timeout: 8 * time.Second}
 	a.NginxProbe = probeNginx
 	a.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)

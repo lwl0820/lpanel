@@ -10,6 +10,7 @@ import (
 	json "encoding/json/v2"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"os"
@@ -121,13 +122,88 @@ func TestACMEZeroSSLRegistrationDoesNotExposeCredentials(t *testing.T) {
 	}
 }
 
+type zeroSSLTestTransport func(*http.Request) (*http.Response, error)
+
+func (transport zeroSSLTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return transport(req)
+}
+
+func TestACMEZeroSSLEmailRegistrationAndManualRetry(t *testing.T) {
+	a, _ := testApp(t)
+	const secret = "test-zerossl-hmac"
+	var emails []string
+	a.zeroSSLClient.Transport = zeroSSLTestTransport(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost || req.URL.String() != zeroSSLEABURL || req.ParseForm() != nil {
+			t.Fatal("未按预期请求 ZeroSSL 绑定凭据")
+		}
+		email := req.PostForm.Get("email")
+		emails = append(emails, email)
+		if email == "retry@example.com" {
+			return &http.Response{StatusCode: http.StatusTooManyRequests, Body: io.NopCloser(strings.NewReader(secret))}, nil
+		}
+		body := `{"success":true,"eab_kid":"test-kid","eab_hmac_key":"` + secret + `"}`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	registrations := 0
+	a.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		registrations++
+		configIndex := slices.Index(args, "--config")
+		if name != "certbot" || args[0] != "register" || configIndex < 0 ||
+			!slices.Contains(args, "https://acme.zerossl.com/v2/DV90") || strings.Contains(strings.Join(args, " "), secret) {
+			t.Fatal("ZeroSSL 注册地址错误，或命令参数误含密钥")
+		}
+		config, err := os.ReadFile(args[configIndex+1])
+		if err != nil || !strings.Contains(string(config), "eab-hmac-key = "+secret+"\n") {
+			t.Fatalf("账户绑定凭据未传至 Certbot 临时配置：%v", err)
+		}
+		return nil, nil
+	}
+
+	cookie := call(a, http.MethodPost, "/api/v1/auth/login", `{"username":"管理员","password":"test-password"}`, nil).Result().Cookies()[0]
+	const path = "/api/v1/acme/accounts"
+	w := call(a, http.MethodPost, path, `{"name":"未同意条款","provider":"zerossl","email":"auto@example.com"}`, cookie)
+	if w.Code != http.StatusBadRequest || len(emails) != 0 {
+		t.Fatal("用户同意条款之前不能请求 ZeroSSL 绑定凭据")
+	}
+	w = call(a, http.MethodPost, path, `{"name":"自动注册","provider":"zerossl","email":"auto+tag@example.com","agree_tos":true}`, cookie)
+	var account ACMEAccount
+	if w.Code != http.StatusCreated || json.Unmarshal(w.Body.Bytes(), &account) != nil || account.NeedsEAB || strings.Contains(w.Body.String(), secret) {
+		t.Fatalf("使用邮箱注册应完成绑定且不回显密钥：%d %s", w.Code, w.Body)
+	}
+	w = call(a, http.MethodPost, path, `{"name":"待重试","provider":"zerossl","email":"retry@example.com","agree_tos":true}`, cookie)
+	var pending ACMEAccount
+	if w.Code != http.StatusCreated || json.Unmarshal(w.Body.Bytes(), &pending) != nil || !pending.NeedsEAB || pending.ID == "" ||
+		strings.Contains(w.Body.String(), secret) || registrations != 1 {
+		t.Fatalf("自动获取失败后应保留待注册账户：%d %s", w.Code, w.Body)
+	}
+	w = call(a, http.MethodPut, path+"/"+pending.ID, `{"name":"手动重试","provider":"zerossl","agree_tos":true,"eab_kid":"test-kid","eab_hmac_key":"`+secret+`"}`, cookie)
+	var retried ACMEAccount
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &retried) != nil || retried.ID != pending.ID || retried.NeedsEAB ||
+		strings.Contains(w.Body.String(), secret) || registrations != 2 || !slices.Equal(emails, []string{"auto+tag@example.com", "retry@example.com"}) {
+		t.Fatalf("手动凭据须优先使用并在同一账户完成注册：%d %s", w.Code, w.Body)
+	}
+}
+
 func TestACMECertificateSwitchAndRenewal(t *testing.T) {
 	a := domainApp(t)
 	ctx := t.Context()
-	second, err := a.CreateACMEAccount(ctx, ACMEAccountInput{Name: "ZeroSSL 账户", Provider: "zerossl", AgreeTOS: true, EABKID: "test-kid", EABHMACKey: "test-key"})
+	const googleServer = "https://dv.acme-v02.api.pki.goog/directory"
+	request := ACMEAccountInput{Name: "Google 账户", Provider: "google", AgreeTOS: true}
+	if _, err := a.CreateACMEAccount(ctx, request); err == nil || !strings.Contains(err.Error(), "Google Cloud Public CA") {
+		t.Fatalf("Google 注册应要求提供绑定凭据：%v", err)
+	}
+	a.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "certbot" || args[0] != "register" || !slices.Contains(args, googleServer) {
+			t.Fatalf("Google 账户注册未使用其服务地址：%s %v", name, args)
+		}
+		return nil, nil
+	}
+	request.EABKID, request.EABHMACKey = "test-kid", "test-key"
+	second, err := a.CreateACMEAccount(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
+	a.Command = func(context.Context, string, ...string) ([]byte, error) { return nil, nil }
 	b, err := a.SaveBinding(ctx, Binding{Kind: "panel", Domain: "panel.example.com"})
 	if err != nil {
 		t.Fatal(err)
@@ -149,8 +225,8 @@ func TestACMECertificateSwitchAndRenewal(t *testing.T) {
 			}
 			return nil, nil
 		}
-		if configDir == a.acmeConfigDir(second.ID) && !slices.Contains(args, "https://acme.zerossl.com/v2/DV90") {
-			t.Fatal("ZeroSSL 账户未使用其签发地址")
+		if configDir == a.acmeConfigDir(second.ID) && !slices.Contains(args, googleServer) {
+			t.Fatal("Google 账户未使用其签发地址")
 		}
 		dir := filepath.Join(configDir, "live", b.Domain)
 		if err := os.MkdirAll(dir, 0700); err != nil {

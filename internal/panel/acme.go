@@ -3,10 +3,12 @@ package panel
 import (
 	"context"
 	"database/sql"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/mail"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,12 +17,14 @@ import (
 
 const (
 	letsEncryptServer = "https://acme-v02.api.letsencrypt.org/directory"
+	zeroSSLEABURL     = "https://api.zerossl.com/acme/eab-credentials-email"
 	legacyACMEID      = "legacy"
 )
 
 var acmeProviders = []acmeProvider{
 	{ID: "letsencrypt", Name: "Let's Encrypt", TOSURL: "https://letsencrypt.org/repository/", server: letsEncryptServer},
 	{ID: "zerossl", Name: "ZeroSSL", TOSURL: "https://zerossl.com/legal/terms", RequiresEAB: true, server: "https://acme.zerossl.com/v2/DV90"},
+	{ID: "google", Name: "Google Cloud Public CA", TOSURL: "https://pki.goog/repository/", RequiresEAB: true, server: "https://dv.acme-v02.api.pki.goog/directory"},
 }
 
 var errACMEAccountInUse = errors.New("此账户还有已签发的证书，无法删除")
@@ -208,16 +212,6 @@ func (a *App) saveACMEAccount(ctx context.Context, id string, input ACMEAccountI
 		account.ID = uuid.New().String()
 		account.ProviderName, account.server = provider.Name, provider.server
 		account.NeedsEAB = provider.RequiresEAB
-		if account.NeedsEAB && !hasCredentials {
-			return ACMEAccount{}, errors.New("请填写 ZeroSSL 账户绑定凭据")
-		}
-		if account.NeedsEAB && !account.AgreeTOS {
-			return ACMEAccount{}, errors.New("请先同意 ZeroSSL 服务条款")
-		}
-		if _, err := a.DB.ExecContext(ctx, "INSERT INTO acme_accounts(id,name,provider,email,agree_tos,needs_eab,server) VALUES(?,?,?,?,?,?,?)",
-			account.ID, account.Name, account.Provider, account.Email, account.AgreeTOS, account.NeedsEAB, account.server); err != nil {
-			return ACMEAccount{}, errors.New("保存证书账户失败")
-		}
 	} else {
 		current, err := scanACMEAccount(a.DB.QueryRowContext(ctx, selectACMEAccount+" WHERE id=?", id))
 		if err != nil {
@@ -228,15 +222,39 @@ func (a *App) saveACMEAccount(ctx context.Context, id string, input ACMEAccountI
 		}
 		account.Provider, account.ProviderName = current.Provider, current.ProviderName
 		account.NeedsEAB, account.server = current.NeedsEAB, current.server
-		if hasCredentials && account.NeedsEAB && !account.AgreeTOS {
-			return ACMEAccount{}, errors.New("请先同意 ZeroSSL 服务条款")
+	}
+
+	if account.NeedsEAB {
+		if !account.AgreeTOS {
+			return ACMEAccount{}, fmt.Errorf("请先同意 %s 服务条款", account.ProviderName)
 		}
-		if _, err = a.DB.ExecContext(ctx, "UPDATE acme_accounts SET name=?,email=?,agree_tos=? WHERE id=?", name, email, input.AgreeTOS, id); err != nil {
-			return ACMEAccount{}, errors.New("保存证书账户失败")
+		if !hasCredentials {
+			if account.Provider != "zerossl" {
+				return ACMEAccount{}, fmt.Errorf("请填写 %s 的账户绑定凭据", account.ProviderName)
+			}
+			if account.Email == "" {
+				return ACMEAccount{}, errors.New("请填写联系邮箱以自动注册 ZeroSSL，或手动填写账户绑定凭据")
+			}
 		}
 	}
 
-	if account.NeedsEAB && hasCredentials {
+	if id == "" {
+		if _, err := a.DB.ExecContext(ctx, "INSERT INTO acme_accounts(id,name,provider,email,agree_tos,needs_eab,server) VALUES(?,?,?,?,?,?,?)",
+			account.ID, account.Name, account.Provider, account.Email, account.AgreeTOS, account.NeedsEAB, account.server); err != nil {
+			return ACMEAccount{}, errors.New("保存证书账户失败")
+		}
+	} else if _, err := a.DB.ExecContext(ctx, "UPDATE acme_accounts SET name=?,email=?,agree_tos=? WHERE id=?", name, email, input.AgreeTOS, id); err != nil {
+		return ACMEAccount{}, errors.New("保存证书账户失败")
+	}
+
+	if account.NeedsEAB {
+		if !hasCredentials {
+			var err error
+			kid, key, err = a.fetchZeroSSLEAB(ctx, account.Email)
+			if err != nil {
+				return account, err
+			}
+		}
 		if err := a.registerEABAccount(ctx, account, kid, key); err != nil {
 			return account, err
 		}
@@ -248,21 +266,50 @@ func (a *App) saveACMEAccount(ctx context.Context, id string, input ACMEAccountI
 	return account, nil
 }
 
+func (a *App) fetchZeroSSLEAB(ctx context.Context, email string) (string, string, error) {
+	unavailable := errors.New("无法自动获取 ZeroSSL 绑定凭据，请核对联系邮箱后重试，或手动填写绑定凭据")
+	form := url.Values{"email": {email}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, zeroSSLEABURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", "", unavailable
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := a.zeroSSLClient.Do(req)
+	if err != nil {
+		return "", "", unavailable
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Success bool   `json:"success"`
+		KID     string `json:"eab_kid"`
+		HMACKey string `json:"eab_hmac_key"`
+	}
+	if resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &result) != nil || !result.Success {
+		return "", "", unavailable
+	}
+	kid, key := strings.TrimSpace(result.KID), strings.TrimSpace(result.HMACKey)
+	if kid == "" || key == "" || strings.ContainsAny(kid+key, "\r\n") {
+		return "", "", unavailable
+	}
+	return kid, key, nil
+}
+
 func (a *App) registerEABAccount(ctx context.Context, account ACMEAccount, kid, key string) error {
 	dir, err := os.MkdirTemp(filepath.Join(a.Root, ".tmp"), "acme-register-*")
 	if err != nil {
-		return errors.New("无法准备 ZeroSSL 账户注册")
+		return fmt.Errorf("无法准备 %s 账户注册", account.ProviderName)
 	}
 	defer os.RemoveAll(dir)
 	config := filepath.Join(dir, "certbot.ini")
 	if err = os.WriteFile(config, fmt.Appendf(nil, "eab-kid = %s\neab-hmac-key = %s\n", kid, key), 0600); err != nil {
-		return errors.New("无法准备 ZeroSSL 账户注册")
+		return fmt.Errorf("无法准备 %s 账户注册", account.ProviderName)
 	}
 	args := append([]string{"register", "--non-interactive", "--agree-tos", "--config", config, "--logs-dir", dir}, a.certbotDirs(account.ID)...)
 	args = append(args, "--server", account.server)
 	args = append(args, certbotContact(account.Email)...)
 	if _, err = a.Command(ctx, "certbot", args...); err != nil {
-		return errors.New("无法注册 ZeroSSL 账户，请检查账户绑定凭据和网络连接后重试")
+		return fmt.Errorf("无法注册 %s 账户，请检查账户绑定凭据和网络连接后重试", account.ProviderName)
 	}
 	return nil
 }
@@ -394,7 +441,7 @@ func (a *App) certificateAccount(ctx context.Context, explicitID, currentID stri
 		return account, errors.New("请先同意所选证书账户的服务条款")
 	}
 	if account.NeedsEAB {
-		return account, errors.New("请先在 ACME 账户管理中完成 ZeroSSL 账户配置")
+		return account, fmt.Errorf("请先在 ACME 账户管理中完成 %s 账户配置", account.ProviderName)
 	}
 	return account, nil
 }

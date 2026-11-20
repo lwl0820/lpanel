@@ -11,7 +11,7 @@
 - SaveSite(ctx, Site)、DeleteSite(ctx, id) 同步网站记录和关联绑定。
 - `POST /api/v1/projects` 接收 `name`、`compose` 和 `environment`。通过配置校验并保存后复用 `project_deploy` 后台操作。响应为 `200`，项目字段仍在顶层，并附带 `operation`。`PUT /api/v1/projects/{id}` 保存配置并返回项目字段。
 - `POST /api/v1/sites` 接收 `hostnames` 字符串数组、`identifier`、`note`、`directory`、`spa` 和可选的 `auto_certificate`、`acme_account_id`。成功返回 `201`、顶层网站字段、`bindings` 数组及可选的 `operation` 或 `certificate_error`。`PUT /api/v1/sites/{id}` 保存 `identifier`、`note`、`directory` 和 `spa`。单独绑定域名与手动申请入口继续接受可选 `acme_account_id`。
-- `GET /api/v1/acme/accounts` 返回 `accounts`、`providers` 和 `default_account_id`。在该路径通过 POST 新增账户，通过 PUT 或 DELETE 操作 `/{id}` 下的账户。输入使用 `name`、`provider`、`email`、`agree_tos` 和可选的 `eab_kid`、`eab_hmac_key`。账户响应包含 `provider_name` 与 `needs_eab`，新建 ZeroSSL 账户已保存但注册失败时返回 `201` 和 `needs_eab: true`，可编辑后重试。
+- `GET /api/v1/acme/accounts` 返回 `accounts`、`providers` 和 `default_account_id`。在该路径通过 POST 新增账户，通过 PUT 或 DELETE 操作 `/{id}` 下的账户。输入使用 `name`、`provider`、`email`、`agree_tos` 和可选的 `eab_kid`、`eab_hmac_key`。账户响应包含 `provider_name` 与 `needs_eab`。
 - UpgradeWorker(ctx, root, version, operationID, releaseDir) 在独立 systemd service 中执行版本切换。
 - CLI 支持 `setup-nginx --root`、`bind-panel --root --domain`、`renew --root`。绑定时可用 `--auto-cert`、`--agree-tos`、`--email`、`--acme-provider`、`--acme-eab-file` 和兼容的 `--acme-server`。内部升级调用 `upgrade-worker`。
 - 安装入口 `sudo bash deploy/install.sh [选项]` 支持 `--repository`、`--archive`、`--username`、`--password`、`--port`、`--login-path`、`--domain`、`--auto-cert`、`--agree-tos`、`--email`、`--acme-provider` 和 `--acme-eab-file`。 [参数详情](../../../docs/install.md#命令行参数)
@@ -21,7 +21,9 @@
 
 Binding 包含 id、kind(panel/project/site)、resource_id、domain、upstream、directory、spa、service、container_port、auto_certificate、certificate_status、certificate_error、expires_at 和实际签发账户 `certificate_account_id`。域名全局唯一。项目使用真实发布端口生成 upstream，网站使用 directory/spa，面板使用安装配置端口。
 
-证书账户从 SQLite 按加入顺序读取，最早的现有账户为默认。无账户时 `default_account_id` 为 `null`。提供商标识为 `letsencrypt`、`zerossl` 及旧自定义地址对应的兼容值。新账户用独立的 `Root/data/acme-accounts/<ID>`，已迁移旧账户用原 `Root/data/acme`。旧证书原地保留。签发使用所选账户，定时续期按绑定实际账户和域名读取 Certbot 保存的签发配置。
+证书账户从 SQLite 按加入顺序读取，最早的现有账户为默认。无账户时 `default_account_id` 为 `null`。面板提供商标识为 `letsencrypt`、`zerossl` 和 `google`，另支持旧自定义地址对应的兼容值。新账户用独立的 `Root/data/acme-accounts/<ID>`，已迁移旧账户用原 `Root/data/acme`。旧证书原地保留。签发使用所选账户，定时续期按绑定实际账户和域名读取 Certbot 保存的签发配置。
+
+ZeroSSL 和 Google Cloud Public CA 在注册时通过 EAB 绑定账户。ZeroSSL 未提交两项凭据时，在用户同意条款后使用联系邮箱向 `https://api.zerossl.com/acme/eab-credentials-email` 获取凭据。有完整凭据时直接注册。Google Cloud Public CA 要求提交两项凭据，使用正式地址 `https://dv.acme-v02.api.pki.goog/directory`。绑定凭据通过权限为 `0600` 的临时配置交给 Certbot，注册结束后清理。 [Google 凭据获取指南](https://docs.cloud.google.com/certificate-manager/docs/public-ca-tutorial)
 
 新建网站至少有一个主机名。主机名统一小写，忽略首尾空白、尾随点和空行。留空的 `identifier` 取第一个主机名。标识独立于内部 ID，数据库沿用 `sites.name` 保存并建立唯一索引，新增 `note` 列。旧数据中重复的名称获得唯一后缀，目录与绑定继续按原记录使用。
 
@@ -60,6 +62,9 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 | 通配符绑定申请证书 | 拒绝申请，继续提供 HTTP |
 | Nginx 检查或生效失败 | nginx -t/reload 返回 0 也须回读标识；失败以独立超时上下文恢复原文件、重载及绑定状态，不能误报证书已启用 |
 | 首次签发失败 | 失败原因可见，保留 HTTP；续期失败则保留已有 HTTPS |
+| 注册前未同意绑定所需条款、提交不完整的绑定凭据，或 ZeroSSL 自动注册缺少邮箱 | 返回 `400`，提示补全后再提交 |
+| 已保存的新账户未能获取绑定凭据或完成注册 | 返回 `201` 和 `needs_eab: true`，通过 PUT 在同一账户上重试 |
+| 编辑待配置账户并再次注册失败 | 返回 `400` 和可操作的错误说明，账户仍为待配置 |
 | 删除账户时还有在用或仍保留的证书 | 返回 `409`，保留账户和默认状态 |
 | 请求签发时无可用账户 | 提示先添加或补全证书账户 |
 | 不同进程打开数据库 | CLI Open 不重置主服务运行中操作，只有 Serve 启动恢复中断状态 |
@@ -92,7 +97,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 `tests/install-smoke.sh` 核对混合输入、证书交互默认值、无人值守安装、必填项缺失、显式空值及密码经标准输入交给初始化的行为。健康检查用例核对自定义端口、首次失败后静默重试、HTTPS 域名解析和证书失败后的 HTTP 入口。
 
-证书账户测试覆盖空列表与默认切换、账户仍有在用或保留证书时拒绝删除、切换签发账户后按实际账户续期，以及旧证书升级后继续沿用原目录。安装冒烟验证默认 Let’s Encrypt 和显式 ZeroSSL。
+证书账户测试覆盖空列表与默认切换、账户仍有在用或保留证书时拒绝删除，以及旧证书升级后继续沿用原目录。用替身测试 ZeroSSL 邮箱注册、失败后手动重试，以及 Google Cloud Public CA 的注册地址、签发和按实际账户续期。安装冒烟验证默认 Let’s Encrypt 和显式 ZeroSSL。
 
 ## 7. 错误与正确用法
 
@@ -110,3 +115,5 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 安装脚本以参数是否提供决定是否交互。`--domain ''` 明确选择服务器地址，不能把空字符串当作缺项再次询问。
 
 账户选择字段 `acme_account_id` 仅用于该次操作。证书成功启用后才更新 `certificate_account_id`，定时续期始终读取实际生效的记录。
+
+注册凭据只传给 Certbot 注册调用。续期复用既有账户，接口响应、日志和命令参数均省略绑定凭据。
