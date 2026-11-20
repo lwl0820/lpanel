@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"账户持久化、签发与部署契约入口"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"SQLite 账户存储和兼容迁移"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"账户绑定密钥与操作日志"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"签发、续期和安装的相关验证"}
+{"file":".trellis/spec/frontend/index.md","reason":"账户管理和申请选择界面的规范入口"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"复用账户选择和表单组件"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"按改动范围核对界面行为"}

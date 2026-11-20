@@ -1,0 +1,29 @@
+{
+  "id": "free-certificate-providers",
+  "name": "free-certificate-providers",
+  "title": "支持多个免费证书提供商",
+  "description": "安装默认选 Let’s Encrypt，面板支持多个 ACME 账户、自动确定默认账户，并按次选择签发账户。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lwl0820",
+  "assignee": "lwl0820",
+  "createdAt": "2026-11-20",
+  "completedAt": "2026-11-20",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "implementation_status": "功能已实现并通过本地验证",
+    "local_validation": "相关 Go 测试、前端类型检查和单测、安装冒烟、Chrome 与 Nginx 联调通过；签发和续期使用 Certbot 替身"
+  }
+}
