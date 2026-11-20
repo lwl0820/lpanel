@@ -1,0 +1,31 @@
+{
+  "id": "00-bootstrap-guidelines",
+  "name": "00-bootstrap-guidelines",
+  "title": "补齐项目开发规范",
+  "description": "根据现有 LPanel 源码、测试和部署流程补齐 Trellis 前后端规范",
+  "status": "completed",
+  "dev_type": "docs",
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "lwl0820",
+  "assignee": "lwl0820",
+  "createdAt": "2026-10-28",
+  "completedAt": "2026-11-20",
+  "branch": "main",
+  "base_branch": null,
+  "worktree_path": null,
+  "commit": "d8a4389e6be414301c17d8ac16332e0b7bf7838c",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/spec/backend/",
+    ".trellis/spec/frontend/"
+  ],
+  "notes": "由 Trellis 初始化创建，已依据现有实现完成规范核验。",
+  "meta": {
+    "implementation_status": "后端五份、前端四份说明已补齐，索引、示例和源码引用已核对。"
+  }
+}
