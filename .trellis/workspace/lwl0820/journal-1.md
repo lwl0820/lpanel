@@ -397,3 +397,33 @@
 ### Next Steps
 
 - 在运行 Docker 的测试服务器验收真实容器启动和发布端口访问。
+
+
+## Session 14: 优化证书提供商选择与账户注册
+<!-- trellis-session: v=2 fp=f8c37dc37eec5635 -->
+
+**Date**: 2026-11-21
+**Task**: 优化证书提供商选择与账户注册
+**Branch**: `main`
+
+### Summary
+
+添加证书账户使用下拉框，ZeroSSL 可用邮箱自动注册并支持手动重试，Google Cloud Public CA 使用项目生成的绑定凭据。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0035094` | feat: 优化证书提供商选择与账户注册 |
+
+### Testing
+
+- [OK] Go ACME 回归测试、前端类型检查、ESLint 和生产构建通过。Chrome 隔离验收覆盖下拉键盘操作、凭据校验与重试。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 有公网测试域名和 Google Cloud 项目凭据时验证真实签发与续期。

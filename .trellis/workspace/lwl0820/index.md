@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
+- **Total Sessions**: 14
 - **Last Active**: 2026-11-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~399 | Active |
+| `journal-1.md` | ~429 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-11-21 | 优化证书提供商选择与账户注册 | `0035094` | `main` |
 | 13 | 2026-11-21 | 新建 Compose 项目后自动部署 | `2b0d30d` | `main` |
 | 12 | 2026-11-20 | 完善静态网站创建与备注编辑 | `4e5b4dc` | `main` |
 | 11 | 2026-11-20 | 支持面板专用登录入口 | `c53c396` | `main` |
