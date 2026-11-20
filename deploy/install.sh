@@ -8,10 +8,10 @@ ask() {
   printf -v "$target" '%s' "${answer:-$default}"
 }
 # 按变量是否设置区分省略参数和显式空值。
-unset repository archive username password panel_port domain auto_cert agree_tos email
+unset repository archive username password panel_port domain auto_cert agree_tos email acme_provider acme_eab_file eab_kid eab_hmac_key
 while (($#)); do
   case "$1" in
-    --repository|--archive|--username|--password|--port|--domain|--auto-cert|--email)
+    --repository|--archive|--username|--password|--port|--domain|--auto-cert|--email|--acme-provider|--acme-eab-file)
       (($# >= 2)) && [[ "$2" != --* ]] || fail "$1 缺少参数值"
       case "$1" in
         --repository) repository="$2" ;;
@@ -22,6 +22,8 @@ while (($#)); do
         --domain) domain="$2" ;;
         --auto-cert) auto_cert="$2" ;;
         --email) email="$2" ;;
+        --acme-provider) acme_provider="$2" ;;
+        --acme-eab-file) acme_eab_file="$2" ;;
       esac
       shift 2 ;;
     --password=*) password="${1#*=}"; shift ;;
@@ -37,8 +39,10 @@ while (($#)); do
   --port <端口>             面板端口
   --domain <域名>           面板域名。传入空串使用服务器地址
   --auto-cert <y或n>        有域名时是否自动申请 HTTPS 证书。交互默认 y
+  --acme-provider <名称>    证书提供商，letsencrypt（默认）或 zerossl
   --agree-tos               同意证书服务条款。交互默认 y
   --email <邮箱>            证书联系邮箱，交互默认 acme@面板域名。可传入空串
+  --acme-eab-file <路径>    ZeroSSL 凭据文件，两行依次为 Key ID 和 HMAC 密钥
   --help                    显示帮助
 
 省略的配置会按安装方式提示输入。直接传入的密码可能出现在进程列表和终端历史中。
@@ -103,10 +107,39 @@ auto_cert="${auto_cert,,}"
 if [[ "$auto_cert" == y ]]; then
   [[ -n "$domain" ]] || fail '自动申请 HTTPS 证书需要指定面板域名'
   echo '域名需已解析到本机，并开放公网 80 端口和面板端口。'
-  echo '证书服务条款：https://letsencrypt.org/repository/'
+  if [[ ! -v acme_provider && -t 0 ]]; then
+    ask acme_provider '证书提供商（Let’s Encrypt 填 letsencrypt，ZeroSSL 填 zerossl）' letsencrypt
+  fi
+  acme_provider="${acme_provider-letsencrypt}"
+  case "$acme_provider" in
+    letsencrypt)
+      [[ ! -v acme_eab_file ]] || fail '--acme-eab-file 仅用于 ZeroSSL'
+      echo 'Let’s Encrypt 服务条款：https://letsencrypt.org/repository/' ;;
+    zerossl) echo 'ZeroSSL 服务条款：https://zerossl.com/legal/terms' ;;
+    *) fail '证书提供商须为 letsencrypt 或 zerossl' ;;
+  esac
   [[ -v agree_tos ]] || ask agree_tos '是否同意证书服务条款？y/n' y
   [[ "${agree_tos,,}" == y ]] || fail '申请证书需要同意服务条款'
   [[ -v email ]] || ask email '证书联系邮箱' "acme@$domain"
+  if [[ "$acme_provider" == zerossl ]]; then
+    if [[ -v acme_eab_file ]]; then
+      [[ -f "$acme_eab_file" ]] && mapfile -t eab_credentials < "$acme_eab_file" || fail '无法读取 ZeroSSL 凭据文件'
+      [[ -v 'eab_credentials[1]' && ! -v 'eab_credentials[2]' ]] ||
+        fail 'ZeroSSL 凭据文件须为两行，依次填写 Key ID 和 HMAC 密钥'
+      eab_kid="${eab_credentials[0]%$'\r'}"
+      eab_hmac_key="${eab_credentials[1]%$'\r'}"
+      unset eab_credentials
+    else
+      [[ -t 0 ]] || fail '请通过 --acme-eab-file 提供 ZeroSSL 凭据文件'
+      echo '请在 ZeroSSL 账户中获取用于自动签发的绑定凭据。'
+      read -r -s -p 'ZeroSSL Key ID：' eab_kid || fail '标准输入已结束，缺少 ZeroSSL Key ID'
+      echo
+      read -r -s -p 'ZeroSSL HMAC 密钥：' eab_hmac_key || fail '标准输入已结束，缺少 ZeroSSL HMAC 密钥'
+      echo
+    fi
+    [[ "$eab_kid" == *[![:space:]]* && "$eab_hmac_key" == *[![:space:]]* ]] ||
+      fail '请提供完整的 ZeroSSL Key ID 和 HMAC 密钥'
+  fi
 fi
 if [[ ! -v repository && -n "${LPANEL_REPOSITORY:-}" ]]; then
   repository="$LPANEL_REPOSITORY"
@@ -140,7 +173,7 @@ chmod 755 "$root" "$root/releases"
 chmod 700 "$root/.tmp" "$root/data"
 export TMPDIR="$root/.tmp"
 work="$(mktemp -d "$TMPDIR/install-XXXXXXXX")"
-trap 'unset password; rm -rf -- "$work"' EXIT
+trap 'unset password eab_kid eab_hmac_key; rm -rf -- "$work"' EXIT
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates curl gnupg python3 nginx certbot
@@ -200,6 +233,12 @@ for file in lpanel web/index.html deploy/lpanel.service deploy/lpanel-renew.serv
 done
 chmod 755 "$work/release/lpanel"
 [[ "$("$work/release/lpanel" version)" == "$version" ]] || fail '程序版本与发行标签不一致'
+if [[ "$auto_cert" == y && "$acme_provider" == zerossl ]]; then
+  bind_help="$("$work/release/lpanel" bind-panel --help 2>&1 || true)"
+  [[ "$bind_help" == *'-acme-eab-file '* ]] || fail '当前发行包暂不支持 ZeroSSL，请使用支持 ZeroSSL 的发行包，或选择 Let’s Encrypt'
+  (umask 077; printf '%s\n' "$eab_kid" "$eab_hmac_key" > "$work/acme-eab")
+  unset eab_kid eab_hmac_key
+fi
 [[ ! -e "$root/releases/$version" && ! -e "$root/current" ]] || fail '已有版本目录，请检查上次安装结果后重试'
 mv "$work/release" "$root/releases/$version"
 ln -s "$root/releases/$version" "$root/current"
@@ -222,7 +261,12 @@ url="http://$address:$panel_port"
 certificate_failed=n
 if [[ -n "$domain" ]]; then
   bind_args=(bind-panel --root "$root" --domain "$domain")
-  if [[ "$auto_cert" == y ]]; then bind_args+=(--auto-cert --agree-tos --email "$email"); fi
+  if [[ "$auto_cert" == y ]]; then
+    bind_args+=(--auto-cert --agree-tos --email "$email")
+    if [[ "$acme_provider" == zerossl ]]; then
+      bind_args+=(--acme-provider zerossl --acme-eab-file "$work/acme-eab")
+    fi
+  fi
   if "$root/current/lpanel" "${bind_args[@]}"; then
     [[ "$auto_cert" != y ]] || url="https://$domain:$panel_port"
   else
@@ -230,6 +274,7 @@ if [[ -n "$domain" ]]; then
     url="http://$server_address:$panel_port"
     echo '域名或证书配置失败，请根据上方原因处理后在面板中重试；当前保留 HTTP 入口。' >&2
   fi
+  if [[ "$auto_cert" == y && "$acme_provider" == zerossl ]]; then rm -f -- "$work/acme-eab"; fi
   systemctl restart lpanel.service
 fi
 probe_url="http://127.0.0.1:$panel_port"

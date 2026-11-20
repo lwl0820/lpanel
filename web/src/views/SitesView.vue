@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { sites, type Site } from '../sites-api'
@@ -12,6 +12,7 @@ import ListState from '../components/ListState.vue'
 import RowMenu, { type MenuItem } from '../components/RowMenu.vue'
 import OperationBanner from '../components/OperationBanner.vue'
 import BindDomainDialog, { type BindPreset, type BindResult } from '../components/BindDomainDialog.vue'
+import AcmeAccountSelect from '../components/AcmeAccountSelect.vue'
 const items = ref<Site[]>([])
 const bindings = ref<Binding[]>([])
 const loading = ref(true)
@@ -49,7 +50,9 @@ const menu = (item: Site): MenuItem[] => [
 const editor = ref(false)
 const editorError = ref('')
 const selected = ref<Site | null>(null)
-const form = reactive({ name: '', directory: '', spa: false, domain: '', auto_certificate: false })
+const form = reactive({ name: '', directory: '', spa: false, domain: '', auto_certificate: false, accountId: '' })
+const requestsCertificate = computed(() => !selected.value && Boolean(form.domain.trim()) && form.auto_certificate)
+watch(requestsCertificate, value => { if (!value) form.accountId = '' })
 const formRef = ref<FormInstance>()
 const rules = computed<FormRules>(() => ({
   name: [{ required: true, whitespace: true, message: '请填写网站名称', trigger: ['blur', 'change'] }],
@@ -58,12 +61,12 @@ const rules = computed<FormRules>(() => ({
 const saving = ref(false)
 function edit(item?: Site) {
   selected.value = item ?? null; editorError.value = ''
-  Object.assign(form, { name: item?.name ?? '', directory: item?.directory ?? '', spa: item?.spa ?? false, domain: '', auto_certificate: false })
+  Object.assign(form, { name: item?.name ?? '', directory: item?.directory ?? '', spa: item?.spa ?? false, domain: '', auto_certificate: false, accountId: '' })
   formRef.value?.clearValidate()
   editor.value = true
 }
 async function save() {
-  if (saving.value) return
+  if (saving.value || (requestsCertificate.value && !form.accountId)) return
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid || saving.value) return
   saving.value = true; editorError.value = ''
@@ -77,7 +80,10 @@ async function save() {
       return
     }
     const domain = form.domain.trim()
-    const result = await sites.create({ ...value, binding: domain ? { domain, auto_certificate: form.auto_certificate } : undefined })
+    const result = await sites.create({
+      ...value,
+      binding: domain ? { domain, auto_certificate: form.auto_certificate, acme_account_id: requestsCertificate.value ? form.accountId : undefined } : undefined,
+    })
     editor.value = false
     if (result.certificate_error) {
       ElMessage.warning(`网站已创建，可通过 HTTP 访问。${result.certificate_error}`)
@@ -143,15 +149,16 @@ async function bound(result: Pick<BindResult, 'operation' | 'domain'>) {
       </el-form-item>
       <el-form-item v-if="!selected" label="域名（可选）" prop="domain">
         <el-input v-model="form.domain" name="domain" placeholder="例如 blog.example.com" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="site-domain-hint"/>
-        <span id="site-domain-hint" class="hint">请先将域名解析到本服务器。申请证书还需开放公网 80 端口，并在面板设置中同意证书服务条款。</span>
+        <span id="site-domain-hint" class="hint">请先将域名解析到本服务器。申请证书还需开放公网 80 端口。</span>
       </el-form-item>
       <el-checkbox v-if="!selected && form.domain.trim()" v-model="form.auto_certificate" name="auto_certificate">自动申请 HTTPS 证书</el-checkbox>
+      <AcmeAccountSelect v-if="editor && requestsCertificate" v-model="form.accountId"/>
       <el-form-item>
         <el-checkbox v-model="form.spa" name="spa">单页应用（找不到的路径都返回 index.html）</el-checkbox>
       </el-form-item>
       <el-alert v-if="editorError" :title="editorError" type="error" :closable="false" show-icon/>
     </el-form>
-    <template #footer><el-button :disabled="saving" @click="editor = false">取消</el-button><el-button type="primary" native-type="submit" form="site-form" :loading="saving">{{ selected ? '保存' : '创建' }}</el-button></template>
+    <template #footer><el-button :disabled="saving" @click="editor = false">取消</el-button><el-button type="primary" native-type="submit" form="site-form" :loading="saving" :disabled="requestsCertificate && !form.accountId">{{ selected ? '保存' : '创建' }}</el-button></template>
   </el-dialog>
   <BindDomainDialog v-model:open="binding" :preset="preset" @done="bound"/>
 </template>

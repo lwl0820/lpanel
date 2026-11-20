@@ -11,6 +11,6 @@ export const projects = {
  action: (id: string, action: string) => request<Operation>(`/projects/${id}/actions/${action}`, { method: 'POST' }),
  status: (id: string) => request<ProjectContainer[]>(`/projects/${id}/status`),
  logs: (id: string) => request<{ log: string }>(`/projects/${id}/logs`),
- bind: (id: string, input: { domain: string; service: string; container_port: number; scheme: string; auto_certificate: boolean }) => request<{ operation: Operation | null }>(`/projects/${id}/bindings`, { method: 'POST', body: JSON.stringify(input) }),
+ bind: (id: string, input: { domain: string; service: string; container_port: number; scheme: string; auto_certificate: boolean; acme_account_id?: string }) => request<{ operation: Operation | null }>(`/projects/${id}/bindings`, { method: 'POST', body: JSON.stringify(input) }),
  operation: (id: string) => request<Operation>(`/operations/${id}`),
 }

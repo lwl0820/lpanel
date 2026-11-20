@@ -31,7 +31,7 @@ async function logout() { try { await auth.logout(); user.value = null; await ro
   <div v-else class="app">
     <aside class="side">
       <RouterLink class="brand" to="/"><AppIcon name="logo"/>LPanel</RouterLink>
-      <nav class="nav" aria-label="主导航"><RouterLink v-for="item in navigation" :key="item.path" :to="item.path" active-class="" exact-active-class="active"><AppIcon :name="item.icon"/><span>{{ item.label }}</span></RouterLink></nav>
+      <nav class="nav" aria-label="主导航"><RouterLink v-for="item in navigation" :key="item.path" :to="item.path" :class="{ active: route.path.startsWith(`${item.path}/`) }" active-class="" exact-active-class="active"><AppIcon :name="item.icon"/><span>{{ item.label }}</span></RouterLink></nav>
       <div class="side-foot"><span class="avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span><span class="who">{{ user.username }}<span>管理员</span></span><button type="button" class="icon-btn" aria-label="退出登录" title="退出登录" @click="logout"><AppIcon name="logout"/></button></div>
     </aside>
     <div class="main-col">

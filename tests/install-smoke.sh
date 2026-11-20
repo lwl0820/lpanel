@@ -11,6 +11,10 @@ cat > "$fixture/package/lpanel" <<'SH'
 #!/bin/bash
 set -euo pipefail
 [[ "$1" != version ]] || { echo v0.1.0; exit; }
+if [[ "$1" == bind-panel && "${2:-}" == --help ]]; then
+  if [[ "${LEGACY_RELEASE:-0}" != 1 ]]; then printf '%s\n' '  -acme-eab-file string'; fi
+  exit 0
+fi
 printf '%s\n' "$*" >> /opt/lpanel/.tmp/cli-arguments
 case "$1" in
   init)
@@ -20,6 +24,13 @@ case "$1" in
     printf '{"initialized":true}\n' > /opt/lpanel/data/config.json ;;
   setup-nginx) ;;
   bind-panel)
+    if [[ " $* " == *' --acme-provider zerossl '* ]]; then
+      [[ "${@: -2:1}" == --acme-eab-file ]]
+      credentials="${@: -1}"
+      [[ "$(stat -c '%a' "$credentials")" == 600 ]]
+      mapfile -t lines < "$credentials"
+      [[ "${lines[0]}" == test-zerossl-key-id && "${lines[1]}" == test-zerossl-hmac-key ]]
+    fi
     if [[ "${FAIL_CERT:-0}" == 1 ]]; then echo '测试签发失败：域名无法验证' >&2; exit 1; fi
     echo '面板访问地址：https://panel.example.com:8443' ;;
   *) exit 9 ;;
@@ -85,9 +96,26 @@ rm /etc/nginx/nginx.conf
 if printf 'admin\ntest-password\ntest-password\n8443\n' | PORT_CONFLICT=1 bash /source/deploy/install.sh --archive "$archive" > /work/.tmp/port-result 2>&1; then exit 13; fi
 grep -q '已被占用' /work/.tmp/port-result
 [[ ! -e /opt/lpanel/data/config.json ]]
-# 混合输入接受三个证书交互默认值，签发失败时保留 HTTP。
-printf 'mixed-admin\nPANEL.example.com\n\n\n\n' | FAIL_CERT=1 bash /source/deploy/install.sh \
-  --archive "$archive" --password test-password --port 8443 > /work/.tmp/cert-result 2>&1
+# 使用伪终端选择证书默认值，签发失败时保留 HTTP。
+FAIL_CERT=1 python3 - "$archive" > /work/.tmp/cert-result 2>&1 <<'PY'
+import os
+import pty
+import subprocess
+import sys
+
+master, terminal = pty.openpty()
+try:
+    process = subprocess.Popen([
+        "bash", "/source/deploy/install.sh", "--archive", sys.argv[1],
+        "--password", "test-password", "--port", "8443",
+    ], stdin=terminal)
+    os.write(master, b"mixed-admin\nPANEL.example.com\n\n\n\n\n")
+    sys.exit(process.wait(timeout=60))
+finally:
+    os.close(terminal)
+    os.close(master)
+PY
+grep -q '证书提供商.*\[letsencrypt\]' /work/.tmp/cert-result
 grep -q '证书未启用' /work/.tmp/cert-result
 grep -q '访问地址：http://192.0.2.10:8443' /work/.tmp/cert-result
 grep -q 'http://127\.0\.0\.1:8443/api/v1/health$' /opt/lpanel/.tmp/curl-arguments
@@ -120,10 +148,24 @@ grep -q '访问地址：https://panel.example.com:8443' /work/.tmp/cli-https-res
 grep -q -- '--resolve panel\.example\.com:8443:127\.0\.0\.1 https://panel\.example\.com:8443/api/v1/health$' /opt/lpanel/.tmp/curl-arguments
 grep -Fxq -- 'bind-panel --root /opt/lpanel --domain panel.example.com --auto-cert --agree-tos --email ' /opt/lpanel/.tmp/cli-arguments
 rm -rf /opt/lpanel
+# ZeroSSL 使用私有文件传递凭据，公开发行仍可用旧二进制完成 Let’s Encrypt 安装。
+printf '%s\r\n' test-zerossl-key-id test-zerossl-hmac-key > /work/.tmp/zerossl-eab
+zerossl_args=(--archive "$archive" --username cli-admin --password test-password --port 8443
+  --domain panel.example.com --auto-cert y --agree-tos --email admin@example.com
+  --acme-provider zerossl --acme-eab-file /work/.tmp/zerossl-eab)
+if LEGACY_RELEASE=1 bash /source/deploy/install.sh "${zerossl_args[@]}" </dev/null > /work/.tmp/legacy-result 2>&1; then exit 20; fi
+grep -q '当前发行包暂不支持 ZeroSSL' /work/.tmp/legacy-result
+[[ ! -e /opt/lpanel/current && ! -e /opt/lpanel/data/config.json ]]
+bash /source/deploy/install.sh "${zerossl_args[@]}" </dev/null > /work/.tmp/zerossl-result 2>&1
+grep -q 'ZeroSSL 服务条款' /work/.tmp/zerossl-result
+grep -q '访问地址：https://panel.example.com:8443' /work/.tmp/zerossl-result
+grep -q -- '--email admin@example.com --acme-provider zerossl --acme-eab-file ' /opt/lpanel/.tmp/cli-arguments
+if grep -Fq 'test-zerossl-' /work/.tmp/zerossl-result /opt/lpanel/.tmp/cli-arguments; then exit 21; fi
+rm -rf /opt/lpanel
 if bash /source/deploy/install.sh --password --domain '' </dev/null > /work/.tmp/missing-value-result 2>&1; then exit 16; fi
 grep -q -- '--password 缺少参数值' /work/.tmp/missing-value-result
 if bash /source/deploy/install.sh --username cli-admin --password '' </dev/null > /work/.tmp/empty-password-result 2>&1; then exit 17; fi
 grep -q '密码长度须为 8 至 72 字节' /work/.tmp/empty-password-result
 [[ ! -e /opt/lpanel ]]
-echo '安装脚本分支验证通过，覆盖交互、混合输入、无人值守、缺项、密码传递、重跑保护、端口冲突、自定义端口健康检查和证书失败回退。'
+echo '安装脚本分支验证通过，覆盖交互、混合输入、无人值守、凭据传递、发行包兼容、重跑保护、端口冲突和证书失败回退。'
 SH

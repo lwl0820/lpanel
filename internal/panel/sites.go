@@ -24,6 +24,7 @@ type Site struct {
 type siteBindingInput struct {
 	Domain          string `json:"domain"`
 	AutoCertificate bool   `json:"auto_certificate"`
+	ACMEAccountID   string `json:"acme_account_id"`
 }
 
 func (s Site) domainBinding(input siteBindingInput) Binding {
@@ -86,12 +87,12 @@ func (a *App) RegisterSiteRoutes() error {
 		if !ReadJSON(w, r, &input) {
 			return
 		}
-		b, err := a.SaveBinding(r.Context(), s.domainBinding(input))
+		b, err := a.SaveBindingWithAccount(r.Context(), s.domainBinding(input), input.ACMEAccountID)
 		if err != nil {
 			WriteError(w, 400, "binding_error", err.Error())
 			return
 		}
-		operation, err := a.startSiteCertificate(b)
+		operation, err := a.startSiteCertificate(b, input.ACMEAccountID)
 		if err != nil {
 			WriteError(w, 500, "operation_error", err.Error())
 			return
@@ -100,12 +101,12 @@ func (a *App) RegisterSiteRoutes() error {
 	})))
 	return nil
 }
-func (a *App) startSiteCertificate(binding Binding) (*Operation, error) {
+func (a *App) startSiteCertificate(binding Binding, accountID string) (*Operation, error) {
 	if !binding.AutoCertificate {
 		return nil, nil
 	}
 	op, err := a.StartOperation("certificate", func(ctx context.Context) (string, error) {
-		return "", a.RequestCertificate(ctx, binding.ID)
+		return "", a.RequestCertificateWithAccount(ctx, binding.ID, accountID)
 	})
 	if err != nil {
 		return nil, err
@@ -146,7 +147,7 @@ func (a *App) saveSite(w http.ResponseWriter, r *http.Request) {
 		status = 201
 	}
 	if saved.Binding != nil {
-		saved.Operation, err = a.startSiteCertificate(*saved.Binding)
+		saved.Operation, err = a.startSiteCertificate(*saved.Binding, input.Binding.ACMEAccountID)
 		if err != nil {
 			saved.CertificateError = "无法启动证书申请，可在域名与证书中重新申请"
 		}
@@ -226,7 +227,7 @@ func (a *App) saveSiteWithBinding(ctx context.Context, s Site, input *siteBindin
 	}
 	siteSaved = true
 	if input != nil {
-		binding, err := a.saveBindingLocked(ctx, s.domainBinding(*input))
+		binding, err := a.saveBindingLocked(ctx, s.domainBinding(*input), input.ACMEAccountID)
 		if err != nil {
 			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()

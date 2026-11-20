@@ -40,8 +40,10 @@ sudo bash deploy/install.sh --archive /服务器路径/lpanel_v0.1.0_linux_amd64
 | `--port <端口>` | 设置面板端口。交互默认值为 `8443`。 |
 | `--domain <域名>` | 绑定面板域名。`--domain ''` 使用服务器地址并跳过证书选项。 |
 | `--auto-cert y\|n` | 有域名时设置是否申请 HTTPS 证书。交互默认值为 `y`。 |
-| `--agree-tos` | 申请证书时同意服务条款。交互默认值为 `y`。 [Let’s Encrypt 服务条款](https://letsencrypt.org/repository/) |
+| `--acme-provider letsencrypt\|zerossl` | 选择证书提供商。直接回车接受 Let’s Encrypt。无人值守时省略此项也使用 Let’s Encrypt。 |
+| `--agree-tos` | 同意所选提供商的证书服务条款。交互默认值为 `y`。 [Let’s Encrypt 服务条款](https://letsencrypt.org/repository/) · [ZeroSSL 服务条款](https://zerossl.com/legal/terms) |
 | `--email <邮箱>` | 申请证书时的联系邮箱。交互默认值为 `acme@面板域名`，例如 `acme@panel.example.com`。`--email ''` 表示留空。 |
+| `--acme-eab-file <路径>` | ZeroSSL 凭据文件。第一行填写 Key ID，第二行填写 HMAC 密钥。交互安装可按提示隐藏输入，无人值守时须提供文件。 [ZeroSSL 凭据获取说明](https://zerossl.com/documentation/acme#eab-credentials) |
 
 部署环境已将管理员密码设置为 Shell 变量 `LPANEL_PASSWORD` 时，可通过以下命令直接安装 HTTP 面板。
 
@@ -50,7 +52,9 @@ sudo bash deploy/install.sh --repository lwl0820/lpanel \
   --username admin --password "$LPANEL_PASSWORD" --port 8443 --domain '' </dev/null
 ```
 
-需要在安装时申请证书，可改用 `--domain panel.example.com --auto-cert y --agree-tos --email ''`，将示例域名换成自己的域名。
+需要在安装时用 Let’s Encrypt 申请证书，可改用 `--domain panel.example.com --auto-cert y --agree-tos --email ''`，将示例域名换成自己的域名。
+
+使用 ZeroSSL 无人值守安装时，在证书参数中加上 `--acme-provider zerossl --acme-eab-file /服务器路径/zerossl-eab`。先从 ZeroSSL 获取凭据并写入仅管理员可读取的文件。发行包须支持 ZeroSSL。
 
 使用 `--password` 时，安装运行期间进程列表可能显示密码。若直接键入密码，终端历史也可能记录它。脚本通过标准输入将密码交给面板初始化。手动安装时可省略该参数，使用隐藏输入。
 
@@ -59,6 +63,10 @@ sudo bash deploy/install.sh --repository lwl0820/lpanel \
 提前将域名解析到服务器，并开放公网 80 端口和实际面板端口。业务网站还使用标准 80/443。HTTP-01 验证始终使用 80，不因面板使用自定义端口而改变。首版不支持泛域名和 DNS 服务商验证。
 
 未申请证书时，地址为 `http://服务器地址:面板端口`；绑定域名且证书签发成功后，地址为 `https://面板域名:面板端口`。首次签发失败保留 HTTP 并输出服务器 IP 地址入口，脚本显示失败原因，安装结束不声称 HTTPS 已启用；修正网络或解析后可在面板中重试。
+
+安装时用于申请证书的提供商和联系邮箱会保存为默认 ACME 账户。仅安装 HTTP 时，可以登录面板，在「域名与证书」的「ACME 账户管理」添加账户。第一个账户会成为默认账户。
+
+申请证书时可以选择其他账户，自动续期会沿用当前证书的签发账户。账户还有已签发的证书时，面板会阻止删除，即使证书已经过期或域名已解除绑定。删除没有证书的默认账户后，面板会选用最早添加的剩余账户。
 
 ## 已有环境与数据
 

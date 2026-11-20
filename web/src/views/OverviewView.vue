@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import { projects, type Project } from '../projects-api'
 import { sites, type Site } from '../sites-api'
 import { domains, type Access, type Binding } from '../domain-api'
@@ -12,6 +11,7 @@ import AppIcon from '../components/AppIcon.vue'
 import PageHeader from '../components/PageHeader.vue'
 import ListState from '../components/ListState.vue'
 import OperationBanner from '../components/OperationBanner.vue'
+import RequestCertificateDialog, { type CertificateRequestResult } from '../components/RequestCertificateDialog.vue'
 interface Data { projects: Project[]; sites: Site[]; bindings: Binding[]; access: Access; upgrade: UpgradeState }
 const data = ref<Data | null>(null)
 const loading = ref(true)
@@ -44,12 +44,15 @@ const stats = computed(() => {
 })
 const fresh = computed(() => !!data.value && !data.value.projects.length && !data.value.sites.length)
 const url = computed(() => data.value ? `${data.value.access.https ? 'https' : 'http'}://${data.value.access.panel_domain || window.location.hostname}:${data.value.access.panel_port}` : '')
-async function certificate(b: Binding) {
-  busy.value = true
-  try {
-    const result = await track(await domains.certificate(b.id), `为 ${b.domain} 申请证书`, `${b.domain} 证书已启用`, b.kind === 'panel' ? '访问入口可能已变更，请到“域名与证书”确认结果。' : undefined)
-    if (result) await load()
-  } catch (e) { busy.value = false; ElMessage.error(errorText(e, '申请失败')) }
+const certificateDialog = ref(false)
+const certificateBinding = ref<Binding | null>(null)
+function certificate(b: Binding) {
+  certificateBinding.value = b
+  certificateDialog.value = true
+}
+async function certificateDone({ binding, operation }: CertificateRequestResult) {
+  const result = await track(operation, `为 ${binding.domain} 申请证书`, `${binding.domain} 证书已启用`, binding.kind === 'panel' ? '访问入口可能已变更，请到“域名与证书”确认结果。' : undefined)
+  if (result) await load()
 }
 </script>
 <template>
@@ -86,7 +89,7 @@ async function certificate(b: Binding) {
           <dl class="kv">
             <dt>访问地址</dt><dd class="mono">{{ url }}</dd>
             <dt>HTTPS</dt><dd><span :class="['pill', data.access.https ? 'ok' : 'idle']">{{ data.access.https ? '已启用' : '未启用' }}</span></dd>
-            <dt>证书邮箱</dt><dd><template v-if="data.access.acme_email">{{ data.access.acme_email }}</template><span v-else class="muted">未填写</span></dd>
+            <dt>证书账户</dt><dd><RouterLink to="/domains/acme-accounts" class="link">管理证书账户</RouterLink></dd>
             <dt>版本</dt><dd>{{ data.upgrade.current }}</dd>
           </dl>
         </div>
@@ -94,4 +97,5 @@ async function certificate(b: Binding) {
       </section>
     </div>
   </template>
+  <RequestCertificateDialog v-model:open="certificateDialog" :binding="certificateBinding" @done="certificateDone"/>
 </template>

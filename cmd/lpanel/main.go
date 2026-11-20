@@ -40,6 +40,8 @@ func run() error {
 	agreeTOS := flags.Bool("agree-tos", false, "同意证书服务条款")
 	email := flags.String("email", "", "证书联系邮箱")
 	acmeServer := flags.String("acme-server", "", "ACME 服务地址")
+	acmeProvider := flags.String("acme-provider", "", "证书提供商，letsencrypt（默认）或 zerossl")
+	acmeEABFile := flags.String("acme-eab-file", "", "ZeroSSL 凭据文件，两行依次为 Key ID 和 HMAC 密钥")
 	repository := flags.String("repository", "", "发行仓库 owner/repo")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -93,17 +95,44 @@ func run() error {
 		if command == "setup-nginx" {
 			return app.ApplyNginx(ctx)
 		}
-		app.Config.AgreeTOS = *agreeTOS
-		app.Config.ACMEEmail = *email
-		app.Config.ACMEServer = *acmeServer
-		if err = panel.SaveConfig(app.Root, app.Config); err != nil {
-			return err
+		var acmeAccount panel.ACMEAccountInput
+		if *autoCert {
+			acmeAccount = panel.ACMEAccountInput{Email: *email, AgreeTOS: *agreeTOS}
+			switch {
+			case *acmeServer != "":
+				if *acmeProvider != "" {
+					return fmt.Errorf("--acme-server 和 --acme-provider 只能选择一个")
+				}
+				acmeAccount.Name, acmeAccount.Provider, acmeAccount.Server = "自定义 ACME", "legacy", *acmeServer
+			case *acmeProvider == "" || *acmeProvider == "letsencrypt":
+				acmeAccount.Name, acmeAccount.Provider = "Let’s Encrypt", "letsencrypt"
+			case *acmeProvider == "zerossl":
+				acmeAccount.Name, acmeAccount.Provider = "ZeroSSL", "zerossl"
+			default:
+				return fmt.Errorf("证书提供商须为 letsencrypt 或 zerossl")
+			}
+			if acmeAccount.Provider == "zerossl" {
+				if *acmeEABFile == "" {
+					return fmt.Errorf("请通过 --acme-eab-file 提供 ZeroSSL 凭据文件")
+				}
+				content, readErr := os.ReadFile(*acmeEABFile)
+				if readErr != nil {
+					return fmt.Errorf("读取 ZeroSSL 凭据文件失败：%w", readErr)
+				}
+				kid, key, found := strings.Cut(strings.TrimSuffix(string(content), "\n"), "\n")
+				acmeAccount.EABKID, acmeAccount.EABHMACKey = strings.TrimSpace(kid), strings.TrimSpace(key)
+				if !found || strings.Contains(key, "\n") || acmeAccount.EABKID == "" || acmeAccount.EABHMACKey == "" {
+					return fmt.Errorf("ZeroSSL 凭据文件须为两行，依次填写 Key ID 和 HMAC 密钥")
+				}
+			} else if *acmeEABFile != "" {
+				return fmt.Errorf("--acme-eab-file 仅用于 ZeroSSL")
+			}
 		}
 		items, err := app.ListBindings(ctx)
 		if err != nil {
 			return err
 		}
-		binding := panel.Binding{Kind: "panel", Domain: *domain, AutoCertificate: *autoCert}
+		binding := panel.Binding{Kind: "panel", Domain: *domain}
 		for _, item := range items {
 			if item.Kind == "panel" {
 				binding.ID = item.ID
@@ -114,7 +143,11 @@ func run() error {
 			return err
 		}
 		if *autoCert {
-			if err = app.RequestCertificate(ctx, binding.ID); err != nil {
+			account, createErr := app.CreateACMEAccount(ctx, acmeAccount)
+			if createErr != nil {
+				return createErr
+			}
+			if err = app.RequestCertificateWithAccount(ctx, binding.ID, account.ID); err != nil {
 				return err
 			}
 		}

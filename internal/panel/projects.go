@@ -457,6 +457,7 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 		ContainerPort   int    `json:"container_port"`
 		Scheme          string `json:"scheme"`
 		AutoCertificate bool   `json:"auto_certificate"`
+		ACMEAccountID   string `json:"acme_account_id"`
 	}
 	if !ReadJSON(w, r, &input) {
 		return
@@ -475,7 +476,7 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 400, "unpublished_port", err.Error())
 		return
 	}
-	b, err := a.SaveBinding(r.Context(), Binding{Kind: "project", ResourceID: p.ID, Domain: input.Domain, Upstream: upstream, Service: input.Service, ContainerPort: input.ContainerPort, AutoCertificate: input.AutoCertificate})
+	b, err := a.SaveBindingWithAccount(r.Context(), Binding{Kind: "project", ResourceID: p.ID, Domain: input.Domain, Upstream: upstream, Service: input.Service, ContainerPort: input.ContainerPort, AutoCertificate: input.AutoCertificate}, input.ACMEAccountID)
 	if err != nil {
 		WriteError(w, 400, "binding_error", err.Error())
 		return
@@ -483,7 +484,7 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 	var operation *Operation
 	if b.AutoCertificate && b.CertificateStatus != "enabled" {
 		op, e := a.StartOperation("certificate", func(ctx context.Context) (string, error) {
-			err := a.RequestCertificate(ctx, b.ID)
+			err := a.RequestCertificateWithAccount(ctx, b.ID, input.ACMEAccountID)
 			return "证书申请流程结束", err
 		})
 		if e != nil {

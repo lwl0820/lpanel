@@ -4,6 +4,11 @@ export type CertState = 'valid' | 'expiring' | 'requesting' | 'failed' | 'disabl
 export interface Todo { kind: 'cert-failed' | 'cert-expiring' | 'upgrade'; binding?: Binding; days?: number }
 const DAY = 24 * 60 * 60 * 1000
 export const EXPIRING_DAYS = 30
+export function certificateActionLabel(binding: Binding): string {
+  if (binding.certificate_status === 'enabled') return '续期证书'
+  if (binding.certificate_status === 'failed') return '重新申请证书'
+  return '申请证书'
+}
 export function daysLeft(expiresAt: string, now: Date): number | null {
   if (!expiresAt) return null
   const time = new Date(expiresAt).getTime()

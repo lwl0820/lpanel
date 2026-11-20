@@ -7,17 +7,20 @@
 ## 2. 签名
 
 - RegisterProjectRoutes、RegisterSiteRoutes、RegisterUpgradeRoutes 在 Open 中创建表并注册接口；域名由 registerDomains 接入。
-- SaveBinding(ctx, Binding)、DeleteBinding(ctx, id)、ApplyNginx(ctx)、RequestCertificate(ctx, id)、RenewCertificates(ctx) 是项目、网站和面板实际复用的边界。
+- SaveBinding(ctx, Binding)、DeleteBinding(ctx, id)、ApplyNginx(ctx)、RequestCertificate(ctx, id)、RenewCertificates(ctx) 是项目、网站和面板复用的边界。需指定账户时使用 SaveBindingWithAccount 和 RequestCertificateWithAccount。
 - SaveSite(ctx, Site)、DeleteSite(ctx, id) 同步网站记录和关联绑定。
-- `POST /api/v1/sites` 支持可选 `binding: {domain, auto_certificate}`。响应为 `201` 和原顶层网站字段，可附加 `binding`、`operation` 或 `certificate_error`。
+- `POST /api/v1/sites` 支持可选 `binding: {domain, auto_certificate, acme_account_id}`。响应为 `201` 和原顶层网站字段，可附加 `binding`、`operation` 或 `certificate_error`。其余域名绑定与手动申请入口也接受可选 `acme_account_id`。
+- `GET /api/v1/acme/accounts` 返回 `accounts`、`providers` 和 `default_account_id`。在该路径通过 POST 新增账户，通过 PUT 或 DELETE 操作 `/{id}` 下的账户。输入使用 `name`、`provider`、`email`、`agree_tos` 和可选的 `eab_kid`、`eab_hmac_key`。账户响应包含 `provider_name` 与 `needs_eab`，新建 ZeroSSL 账户已保存但注册失败时返回 `201` 和 `needs_eab: true`，可编辑后重试。
 - UpgradeWorker(ctx, root, version, operationID, releaseDir) 在独立 systemd service 中执行版本切换。
-- CLI：setup-nginx --root；bind-panel --root --domain [--auto-cert --agree-tos --email --acme-server]；renew --root；upgrade-worker 由内部升级流程调用。
-- 安装入口 `sudo bash deploy/install.sh [选项]` 支持 `--repository`、`--archive`、`--username`、`--password`、`--port`、`--domain`、`--auto-cert`、`--agree-tos`、`--email`。 [参数详情](../../../docs/install.md#命令行参数)
+- CLI 支持 `setup-nginx --root`、`bind-panel --root --domain`、`renew --root`。绑定时可用 `--auto-cert`、`--agree-tos`、`--email`、`--acme-provider`、`--acme-eab-file` 和兼容的 `--acme-server`。内部升级调用 `upgrade-worker`。
+- 安装入口 `sudo bash deploy/install.sh [选项]` 支持 `--repository`、`--archive`、`--username`、`--password`、`--port`、`--domain`、`--auto-cert`、`--agree-tos`、`--email`、`--acme-provider` 和 `--acme-eab-file`。 [参数详情](../../../docs/install.md#命令行参数)
 - 官方安装布局的卸载入口为 `sudo bash deploy/uninstall.sh`。脚本从终端询问是否清理 Compose 项目，并单独读取最终确认。
 
 ## 3. 数据与环境契约
 
-Binding 包含 id、kind(panel/project/site)、resource_id、domain、upstream、directory、spa、service、container_port、auto_certificate、certificate_status、certificate_error、expires_at。域名全局唯一；项目使用真实发布端口生成 upstream，网站使用 directory/spa，面板使用安装配置端口。
+Binding 包含 id、kind(panel/project/site)、resource_id、domain、upstream、directory、spa、service、container_port、auto_certificate、certificate_status、certificate_error、expires_at 和实际签发账户 `certificate_account_id`。域名全局唯一。项目使用真实发布端口生成 upstream，网站使用 directory/spa，面板使用安装配置端口。
+
+证书账户从 SQLite 按加入顺序读取，最早的现有账户为默认。无账户时 `default_account_id` 为 `null`。提供商标识为 `letsencrypt`、`zerossl` 及旧自定义地址对应的兼容值。新账户用独立的 `Root/data/acme-accounts/<ID>`，已迁移旧账户用原 `Root/data/acme`。旧证书原地保留。签发使用所选账户，定时续期按绑定实际账户和域名读取 Certbot 保存的签发配置。
 
 新建网站的 `directory` 留空时分配 `Root/sites/<ID>/`，自动分配的目录可供 Nginx 遍历，内容位于私有 `data/` 和版本目录之外。手动指定时沿用已存在的绝对目录及其权限。编辑网站仍需给定目录。
 
@@ -29,7 +32,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 推送正式标签会触发 `.github/workflows/release.yml`。从 `main` 手动触发时输入已有的 `tag`。两种路径均检出标签源码、执行 `scripts/build-release.sh`、校验 amd64 和 arm64 发行包，再以四个附件发布正式 Release。安装和升级通过 GitHub Release 条目读取发行包。
 
-在线安装按命令行仓库、`LPANEL_REPOSITORY`、交互输入的顺序取值。安装仅询问当前方式适用的缺项。填写域名后，自动申请证书的交互默认值为 `y`。申请证书时，条款默认同意，联系邮箱默认为 `acme@<转为小写的面板域名>`。按回车接受默认值。显式空域名表示使用服务器地址，显式空邮箱表示留空。密码始终通过标准输入交给面板初始化。 [密码传递约定](./logging-guidelines.md)
+在线安装按命令行仓库、`LPANEL_REPOSITORY`、交互输入的顺序取值。安装仅询问当前方式适用的缺项。填写域名后，自动申请证书的交互默认值为 `y`。申请证书时，提供商默认 Let’s Encrypt，所选条款默认同意，联系邮箱默认为 `acme@<转为小写的面板域名>`。按回车接受默认值。申请证书的安装创建首个 ACME 账户，HTTP 安装从空账户列表开始。显式空域名表示使用服务器地址，显式空邮箱表示留空。密码始终通过标准输入交给面板初始化。 [密码传递约定](./logging-guidelines.md)
 
 安装完成前通过 Nginx 的面板端口访问 `/api/v1/health`，确认 `status` 为 `ok` 且 `version` 与发行标签一致，再检查首页。域名入口保留域名和协议并在本机连接，证书失败时检查本机 HTTP 入口。探测连接失败时静默重试，持续失败时退出并提示查看服务日志。 [安装脚本](../../../deploy/install.sh)
 
@@ -45,6 +48,8 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 | 建站的 HTTP 绑定已生效，证书任务无法排入 | 返回 `201`、网站和绑定，并带 `certificate_error`，可从域名管理重试 |
 | Nginx 检查或生效失败 | nginx -t/reload 返回 0 也须回读标识；失败以独立超时上下文恢复原文件、重载及绑定状态，不能误报证书已启用 |
 | 首次签发失败 | 失败原因可见，保留 HTTP；续期失败则保留已有 HTTPS |
+| 删除账户时还有在用或仍保留的证书 | 返回 `409`，保留账户和默认状态 |
+| 请求签发时无可用账户 | 提示先添加或补全证书账户 |
 | 不同进程打开数据库 | CLI Open 不重置主服务运行中操作，只有 Serve 启动恢复中断状态 |
 | 缺少发行附件 | 保持不可升级，不因版本号较新而重新显示升级按钮 |
 | 新版启动失败 | 恢复 previous current，并重启上一版 |
@@ -59,6 +64,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 基础：无发布源显示未配置，无域名可用 IP:端口管理，无证书不阻止 HTTP 网站使用。
 建站：留空目录分配新目录，填写域名建立 HTTP 入口。勾选证书后再启动后台申请，证书失败时保留 HTTP，删除网站时保留内容目录。
 安装：完整参数支持关闭标准输入。提供账号和端口时，脚本仍会按需询问密码与域名。选择申请证书但域名为空时在安装前报错。
+账户：无证书账户可删除。删除默认账户后选最早添加的剩余账户，删空后等待下一次添加。手动改选账户签发成功后，当前证书切换到新账户；失败时继续使用原证书。
 失败：无效 Nginx 配置回退旧文件；网站保存/删除失败恢复旧记录；删除项目不使用 --volumes，删除网站不删除内容目录。
 卸载：默认路径可在保留业务容器的情况下停用面板。清理选项在最终确认前列出项目和目录，重复执行已完成的卸载时提示无需操作。
 
@@ -72,6 +78,8 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 `tests/install-smoke.sh` 核对混合输入、证书交互默认值、无人值守安装、必填项缺失、显式空值及密码经标准输入交给初始化的行为。健康检查用例核对自定义端口、首次失败后静默重试、HTTPS 域名解析和证书失败后的 HTTP 入口。
 
+证书账户测试覆盖空列表与默认切换、账户仍有在用或保留证书时拒绝删除、切换签发账户后按实际账户续期，以及旧证书升级后继续沿用原目录。安装冒烟验证默认 Let’s Encrypt 和显式 ZeroSSL。
+
 ## 7. 错误与正确用法
 
 错误：让证书续期 CLI 调用 Open 时把全部 running 操作置为 failed；把 ps JSON Lines 直接当整体数组解析；仅因版本号较新就认为有可用发行包。
@@ -84,3 +92,5 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 建站默认目录应位于 `Root/sites/`。将内容放在权限为 `0700` 的 `data/` 会阻止 Nginx 读取。证书申请在 HTTP 绑定确认生效后开始，页面通过任务最终结果确认 HTTPS。
 
 安装脚本以参数是否提供决定是否交互。`--domain ''` 明确选择服务器地址，不能把空字符串当作缺项再次询问。
+
+账户选择字段 `acme_account_id` 仅用于该次操作。证书成功启用后才更新 `certificate_account_id`，定时续期始终读取实际生效的记录。

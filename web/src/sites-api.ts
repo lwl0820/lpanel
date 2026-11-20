@@ -2,7 +2,7 @@ import { request } from './api'
 import type { Binding, BindingResult } from './domain-api'
 export interface Site { id: string; name: string; directory: string; spa: boolean; updated_at: string }
 export type SiteInput = Pick<Site, 'name' | 'directory' | 'spa'>
-type SiteBindingInput = Pick<Binding, 'domain' | 'auto_certificate'>
+type SiteBindingInput = Pick<Binding, 'domain' | 'auto_certificate'> & { acme_account_id?: string }
 type SiteCreateResult = Site & Partial<Pick<BindingResult, 'binding' | 'operation'>> & { certificate_error?: string }
 export const sites = {
  list: () => request<Site[]>('/sites'),

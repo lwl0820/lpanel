@@ -24,6 +24,9 @@ func domainApp(t *testing.T) *App {
 	a, _ := testApp(t)
 	a.Config.NginxConfigDir = filepath.Join(a.Root, "nginx")
 	a.Config.AgreeTOS = true
+	if err := a.saveLegacyAccessConfig(t.Context(), a.Config); err != nil {
+		t.Fatal(err)
+	}
 	a.Command = func(context.Context, string, ...string) ([]byte, error) { return nil, nil }
 	a.NginxProbe = func(context.Context, string, string, string) error { return nil }
 	return a
@@ -147,6 +150,9 @@ func TestBindingValidationAndDeletion(t *testing.T) {
 		t.Fatal("允许泛域名")
 	}
 	a.Config.AgreeTOS = false
+	if err := a.saveLegacyAccessConfig(t.Context(), a.Config); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := a.SaveBinding(ctx, Binding{Kind: "panel", Domain: "panel.example.com", AutoCertificate: true}); err == nil {
 		t.Fatal("未接受条款允许申请")
 	}

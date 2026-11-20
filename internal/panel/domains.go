@@ -25,23 +25,27 @@ import (
 )
 
 type Binding struct {
-	ID                string `json:"id"`
-	Kind              string `json:"kind"`
-	ResourceID        string `json:"resource_id"`
-	Domain            string `json:"domain"`
-	Upstream          string `json:"upstream"`
-	Directory         string `json:"directory"`
-	SPA               bool   `json:"spa"`
-	Service           string `json:"service"`
-	ContainerPort     int    `json:"container_port"`
-	AutoCertificate   bool   `json:"auto_certificate"`
-	CertificateStatus string `json:"certificate_status"`
-	CertificateError  string `json:"certificate_error"`
-	ExpiresAt         string `json:"expires_at"`
+	ID                   string `json:"id"`
+	Kind                 string `json:"kind"`
+	ResourceID           string `json:"resource_id"`
+	Domain               string `json:"domain"`
+	Upstream             string `json:"upstream"`
+	Directory            string `json:"directory"`
+	SPA                  bool   `json:"spa"`
+	Service              string `json:"service"`
+	ContainerPort        int    `json:"container_port"`
+	AutoCertificate      bool   `json:"auto_certificate"`
+	CertificateStatus    string `json:"certificate_status"`
+	CertificateAccountID string `json:"certificate_account_id,omitempty"`
+	CertificateError     string `json:"certificate_error"`
+	ExpiresAt            string `json:"expires_at"`
 }
 
 func (a *App) registerDomains() error {
 	if _, err := a.DB.Exec(`CREATE TABLE IF NOT EXISTS bindings(id TEXT PRIMARY KEY,domain TEXT NOT NULL UNIQUE,payload TEXT NOT NULL)`); err != nil {
+		return err
+	}
+	if err := a.registerACMEAccounts(); err != nil {
 		return err
 	}
 	a.Mux.Handle("GET /api/v1/bindings", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -53,11 +57,14 @@ func (a *App) registerDomains() error {
 		WriteJSON(w, 200, items)
 	})))
 	a.Mux.Handle("POST /api/v1/bindings", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var b Binding
-		if !ReadJSON(w, r, &b) {
+		var input struct {
+			Binding
+			ACMEAccountID string `json:"acme_account_id"`
+		}
+		if !ReadJSON(w, r, &input) {
 			return
 		}
-		saved, err := a.SaveBinding(r.Context(), b)
+		saved, err := a.SaveBindingWithAccount(r.Context(), input.Binding, input.ACMEAccountID)
 		if err != nil {
 			WriteError(w, 400, "binding_error", err.Error())
 			return
@@ -65,7 +72,7 @@ func (a *App) registerDomains() error {
 		var op *Operation
 		if saved.AutoCertificate && saved.CertificateStatus != "enabled" {
 			job, e := a.StartOperation("certificate", func(ctx context.Context) (string, error) {
-				err := a.RequestCertificate(ctx, saved.ID)
+				err := a.RequestCertificateWithAccount(ctx, saved.ID, input.ACMEAccountID)
 				return "证书申请流程结束", err
 			})
 			if e != nil {
@@ -89,8 +96,14 @@ func (a *App) registerDomains() error {
 			WriteError(w, 404, "not_found", "域名绑定不存在")
 			return
 		}
+		var input struct {
+			ACMEAccountID string `json:"acme_account_id"`
+		}
+		if r.ContentLength != 0 && !ReadJSON(w, r, &input) {
+			return
+		}
 		op, err := a.StartOperation("certificate", func(ctx context.Context) (string, error) {
-			err := a.RequestCertificate(ctx, id)
+			err := a.RequestCertificateWithAccount(ctx, id, input.ACMEAccountID)
 			return "证书申请流程结束", err
 		})
 		if err != nil {
@@ -113,11 +126,10 @@ func (a *App) registerDomains() error {
 		config.ACMEEmail = in.ACMEEmail
 		config.ACMEServer = in.ACMEServer
 		config.AgreeTOS = in.AgreeTOS
-		if err := SaveConfig(a.Root, config); err != nil {
+		if err := a.saveLegacyAccessConfig(r.Context(), config); err != nil {
 			WriteError(w, 400, "config_error", err.Error())
 			return
 		}
-		a.Config = config
 		WriteJSON(w, 200, config)
 	})))
 	return nil
@@ -161,11 +173,15 @@ func (a *App) storeBinding(ctx context.Context, b Binding) error {
 	return err
 }
 func (a *App) SaveBinding(ctx context.Context, b Binding) (Binding, error) {
+	return a.SaveBindingWithAccount(ctx, b, "")
+}
+
+func (a *App) SaveBindingWithAccount(ctx context.Context, b Binding, accountID string) (Binding, error) {
 	a.domainsMu.Lock()
 	defer a.domainsMu.Unlock()
-	return a.saveBindingLocked(ctx, b)
+	return a.saveBindingLocked(ctx, b, accountID)
 }
-func (a *App) saveBindingLocked(ctx context.Context, b Binding) (Binding, error) {
+func (a *App) saveBindingLocked(ctx context.Context, b Binding, accountID string) (Binding, error) {
 	b.Domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(b.Domain), "."))
 	if !regexp.MustCompile(`^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$`).MatchString(b.Domain) || len(b.Domain) > 253 {
 		return b, fmt.Errorf("请输入有效的普通域名")
@@ -198,14 +214,18 @@ func (a *App) saveBindingLocked(ctx context.Context, b Binding) (Binding, error)
 	}
 	old, oldErr := a.binding(ctx, b.ID)
 	b.CertificateStatus = "disabled"
+	b.CertificateAccountID = ""
 	b.CertificateError = ""
 	b.ExpiresAt = ""
 	if oldErr == nil && old.Domain == b.Domain {
 		b.CertificateStatus = old.CertificateStatus
+		b.CertificateAccountID = old.CertificateAccountID
 		b.ExpiresAt = old.ExpiresAt
 	}
-	if b.AutoCertificate && !a.Config.AgreeTOS {
-		return b, fmt.Errorf("请先在面板设置中同意证书服务条款")
+	if b.AutoCertificate && b.CertificateStatus != "enabled" {
+		if _, err := a.certificateAccount(ctx, accountID, b.CertificateAccountID); err != nil {
+			return b, err
+		}
 	}
 	if b.Kind == "panel" {
 		items, err := a.ListBindings(ctx)
@@ -299,7 +319,8 @@ func (a *App) renderNginx(items []Binding, marker string) string {
 		}
 		fmt.Fprintf(&out, "; server_name %s;\n", b.Domain)
 		if tls {
-			fmt.Fprintf(&out, "ssl_certificate %q; ssl_certificate_key %q;\n", filepath.Join(a.Root, "data/acme/live", b.Domain, "fullchain.pem"), filepath.Join(a.Root, "data/acme/live", b.Domain, "privkey.pem"))
+			dir := a.certificateDir(b.CertificateAccountID, b.Domain)
+			fmt.Fprintf(&out, "ssl_certificate %q; ssl_certificate_key %q;\n", filepath.Join(dir, "fullchain.pem"), filepath.Join(dir, "privkey.pem"))
 		}
 		out.WriteString(acme)
 		switch b.Kind {
@@ -403,53 +424,42 @@ func (a *App) applyNginx(ctx context.Context) error {
 	return nil
 }
 func (a *App) RequestCertificate(ctx context.Context, id string) error {
+	return a.RequestCertificateWithAccount(ctx, id, "")
+}
+
+func (a *App) RequestCertificateWithAccount(ctx context.Context, id, accountID string) error {
 	a.domainsMu.Lock()
 	defer a.domainsMu.Unlock()
 	b, err := a.binding(ctx, id)
 	if err != nil {
 		return err
 	}
-	if !a.Config.AgreeTOS {
-		return fmt.Errorf("尚未同意证书服务条款")
+	account, err := a.certificateAccount(ctx, accountID, b.CertificateAccountID)
+	if err != nil {
+		return err
 	}
 	if b.Kind == "panel" && a.Config.PanelPort == 80 {
 		return fmt.Errorf("面板使用 HTTPS 时不能占用证书验证端口 80")
 	}
 	previous := b
 	b.AutoCertificate = true
-	b.CertificateStatus = "requesting"
+	if b.CertificateStatus != "enabled" {
+		b.CertificateStatus = "requesting"
+	}
 	if err = a.storeBinding(ctx, b); err != nil {
 		return err
 	}
-	args := []string{"certonly", "--non-interactive", "--agree-tos", "--webroot", "-w", filepath.Join(a.Root, "acme-webroot"), "--cert-name", b.Domain, "-d", b.Domain, "--config-dir", filepath.Join(a.Root, "data/acme"), "--work-dir", filepath.Join(a.Root, ".tmp/acme"), "--logs-dir", filepath.Join(a.Root, "data/logs/acme")}
-	if a.Config.ACMEEmail != "" {
-		args = append(args, "--email", a.Config.ACMEEmail)
-	} else {
-		args = append(args, "--register-unsafely-without-email")
-	}
-	if a.Config.ACMEServer != "" {
-		args = append(args, "--server", a.Config.ACMEServer)
-	}
+	args := []string{"certonly", "--non-interactive", "--agree-tos", "--webroot", "-w", filepath.Join(a.Root, "acme-webroot"), "--cert-name", b.Domain, "-d", b.Domain}
+	args = append(args, a.certbotDirs(account.ID)...)
+	args = append(args, "--logs-dir", filepath.Join(a.Root, "data/logs/acme", account.ID), "--server", account.server)
+	args = append(args, certbotContact(account.Email)...)
 	output, err := a.Command(ctx, "certbot", args...)
 	if err == nil {
-		data, e := os.ReadFile(filepath.Join(a.Root, "data/acme/live", b.Domain, "fullchain.pem"))
-		if e != nil {
-			err = e
-		} else {
-			block, _ := pem.Decode(data)
-			if block == nil {
-				err = fmt.Errorf("证书格式无效")
-			} else {
-				cert, e := x509.ParseCertificate(block.Bytes)
-				err = e
-				if e == nil {
-					b.ExpiresAt = cert.NotAfter.UTC().Format(time.RFC3339)
-				}
-			}
-		}
+		b.ExpiresAt, err = a.certificateExpiry(account.ID, b.Domain)
 	}
 	if err == nil {
 		b.CertificateStatus = "enabled"
+		b.CertificateAccountID = account.ID
 		b.CertificateError = ""
 		err = a.storeBinding(ctx, b)
 		if err == nil {
@@ -458,53 +468,71 @@ func (a *App) RequestCertificate(ctx context.Context, id string) error {
 	}
 	if err != nil {
 		b.CertificateStatus = "failed"
+		b.CertificateAccountID = ""
 		b.ExpiresAt = ""
 		if previous.CertificateStatus == "enabled" {
 			b.CertificateStatus = "enabled"
+			b.CertificateAccountID = previous.CertificateAccountID
 			b.ExpiresAt = previous.ExpiresAt
 		}
 		b.CertificateError = fmt.Sprintf("申请或启用证书失败：%s：%v", strings.TrimSpace(string(output)), err)
-		rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = a.storeBinding(rollbackCtx, b)
 		return fmt.Errorf("%s", b.CertificateError)
 	}
 	return nil
 }
+
+func (a *App) certificateExpiry(accountID, domain string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(a.certificateDir(accountID, domain), "fullchain.pem"))
+	if err != nil {
+		return "", err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return "", fmt.Errorf("证书格式无效")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", err
+	}
+	return cert.NotAfter.UTC().Format(time.RFC3339), nil
+}
+
 func (a *App) RenewCertificates(ctx context.Context) error {
 	a.domainsMu.Lock()
 	defer a.domainsMu.Unlock()
-	args := []string{"renew", "--non-interactive", "--config-dir", filepath.Join(a.Root, "data/acme"), "--work-dir", filepath.Join(a.Root, ".tmp/acme"), "--logs-dir", filepath.Join(a.Root, "data/logs/acme"), "--deploy-hook", "nginx -t && systemctl reload nginx"}
-	output, err := a.Command(ctx, "certbot", args...)
-	if err != nil {
-		return fmt.Errorf("证书续期失败：%s：%w", output, err)
-	}
 	items, err := a.ListBindings(ctx)
 	if err != nil {
 		return err
 	}
+	var failures []error
 	for _, b := range items {
 		if b.CertificateStatus != "enabled" {
 			continue
 		}
-		data, e := os.ReadFile(filepath.Join(a.Root, "data/acme/live", b.Domain, "fullchain.pem"))
-		if e != nil {
-			return e
+		args := []string{"renew", "--non-interactive", "--cert-name", b.Domain}
+		args = append(args, a.certbotDirs(b.CertificateAccountID)...)
+		args = append(args, "--logs-dir", filepath.Join(a.Root, "data/logs/acme", b.CertificateAccountID),
+			"--deploy-hook", "nginx -t && systemctl reload nginx")
+		output, err := a.Command(ctx, "certbot", args...)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%s 证书续期失败：%s：%w", b.Domain, strings.TrimSpace(string(output)), err))
+			continue
 		}
-		block, _ := pem.Decode(data)
-		if block == nil {
-			return fmt.Errorf("证书格式无效")
+		expiresAt, err := a.certificateExpiry(b.CertificateAccountID, b.Domain)
+		if err == nil {
+			// 定时器独立运行，只更新仍使用该证书的绑定。
+			_, err = a.DB.ExecContext(ctx, `UPDATE bindings SET payload=json_set(payload,'$.expires_at',?)
+				WHERE id=? AND domain=? AND json_extract(payload,'$.certificate_status')='enabled'
+				AND COALESCE(json_extract(payload,'$.certificate_account_id'),'')=?`, expiresAt, b.ID, b.Domain, b.CertificateAccountID)
 		}
-		cert, e := x509.ParseCertificate(block.Bytes)
-		if e != nil {
-			return e
-		}
-		b.ExpiresAt = cert.NotAfter.UTC().Format(time.RFC3339)
-		if e = a.storeBinding(ctx, b); e != nil {
-			return e
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%s 证书到期时间更新失败：%w", b.Domain, err))
 		}
 	}
-	return a.applyNginx(ctx)
+	return errors.Join(failures...)
 }
 
 // probeNginx 只读取本机面板的配置标识，不验证公网证书信任或探测业务上游。

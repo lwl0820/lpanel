@@ -198,6 +198,9 @@ func TestSiteCreateBindingFailureRollsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Config.AgreeTOS = false
+	if err := a.saveLegacyAccessConfig(ctx, a.Config); err != nil {
+		t.Fatal(err)
+	}
 	a.Command = func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("Nginx 重载失败") }
 	custom := t.TempDir()
 	content := filepath.Join(custom, "index.html")

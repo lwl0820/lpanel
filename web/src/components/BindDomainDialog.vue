@@ -1,18 +1,20 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, useId, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import type { Operation } from '../api'
 import { domains, type Binding } from '../domain-api'
 import { projects, type Project, type ProjectPort } from '../projects-api'
 import { sites, type Site } from '../sites-api'
 import { errorText } from '../format'
+import AcmeAccountSelect from './AcmeAccountSelect.vue'
 export interface BindPreset { kind: 'project' | 'site'; id: string; name: string }
 export interface BindResult { operation: Operation | null; accessURL: string; domain: string }
 // 新建：preset 为空时先选目标（域名页）；编辑：传 binding，只改域名和自动证书
 const props = defineProps<{ preset?: BindPreset | null; binding?: Binding | null }>()
 const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ done: [result: BindResult] }>()
-const form = reactive({ target: '', domain: '', port: '', scheme: 'http', auto_certificate: false })
+const form = reactive({ target: '', domain: '', port: '', scheme: 'http', auto_certificate: false, accountId: '' })
+const formId = useId()
 const formRef = ref<FormInstance>()
 const projectList = ref<Project[]>([])
 const siteList = ref<Site[]>([])
@@ -24,6 +26,10 @@ const kind = computed(() => props.binding?.kind ?? form.target.split(':')[0])
 const targetId = computed(() => form.target.split(':')[1] ?? '')
 const options = computed(() => ports.value.filter(p => p.source === 'ports' && p.protocol === 'tcp'))
 const choosing = computed(() => !props.binding && !props.preset)
+const requestsCertificate = computed(() => form.auto_certificate && (
+  props.binding?.certificate_status !== 'enabled' ||
+  props.binding.domain !== form.domain.trim().toLowerCase().replace(/\.$/, '')
+))
 const rules: FormRules = {
   domain: [{ required: true, whitespace: true, message: '请填写域名', trigger: ['blur', 'change'] }],
   target: [{ required: true, message: '请选择指向', trigger: 'change' }],
@@ -32,7 +38,7 @@ const rules: FormRules = {
 watch(open, async value => {
   if (!value) return
   error.value = ''; ports.value = []
-  Object.assign(form, { target: '', domain: props.binding?.domain ?? '', port: '', scheme: 'http', auto_certificate: props.binding?.auto_certificate ?? false })
+  Object.assign(form, { target: '', domain: props.binding?.domain ?? '', port: '', scheme: 'http', auto_certificate: props.binding?.auto_certificate ?? false, accountId: '' })
   formRef.value?.clearValidate()
   if (props.preset) { form.target = `${props.preset.kind}:${props.preset.id}`; return }
   if (props.binding) return
@@ -41,6 +47,7 @@ watch(open, async value => {
     form.target = projectList.value[0] ? `project:${projectList.value[0].id}` : siteList.value[0] ? `site:${siteList.value[0].id}` : 'panel'
   } catch (e) { error.value = errorText(e, '读取项目和网站失败') }
 })
+watch(requestsCertificate, value => { if (!value) form.accountId = '' })
 watch(() => form.target, () => { form.port = ''; ports.value = []; if (open.value && kind.value === 'project' && !props.binding) void scan() })
 async function scan() {
   const id = targetId.value
@@ -53,23 +60,24 @@ async function scan() {
 }
 async function panelURL(domain: string) { try { return `https://${domain}:${(await domains.access()).panel_port}` } catch { return '' } }
 async function submit() {
-  if (!(await formRef.value?.validate().catch(() => false))) return
+  if (saving.value || (requestsCertificate.value && !form.accountId) || !await formRef.value?.validate().catch(() => false)) return
   saving.value = true; error.value = ''
   const domain = form.domain.trim()
+  const certOptions = { auto_certificate: form.auto_certificate, acme_account_id: requestsCertificate.value ? form.accountId : undefined }
   try {
     let operation: Operation | null = null
     let accessURL = ''
     if (props.binding) {
-      const result = await domains.save({ ...props.binding, domain, auto_certificate: form.auto_certificate })
+      const result = await domains.save({ ...props.binding, domain, ...certOptions })
       operation = result.operation
       if (result.binding.kind === 'panel' && operation) accessURL = await panelURL(result.binding.domain)
     } else if (kind.value === 'project') {
       const port = options.value[Number(form.port)]
-      operation = (await projects.bind(targetId.value, { domain, service: port.service, container_port: port.container_port, scheme: form.scheme, auto_certificate: form.auto_certificate })).operation
+      operation = (await projects.bind(targetId.value, { domain, service: port.service, container_port: port.container_port, scheme: form.scheme, ...certOptions })).operation
     } else if (kind.value === 'site') {
-      operation = (await sites.bind(targetId.value, { domain, auto_certificate: form.auto_certificate })).operation
+      operation = (await sites.bind(targetId.value, { domain, ...certOptions })).operation
     } else {
-      const result = await domains.save({ kind: 'panel', resource_id: 'panel', domain, auto_certificate: form.auto_certificate })
+      const result = await domains.save({ kind: 'panel', resource_id: 'panel', domain, ...certOptions })
       operation = result.operation
       if (operation) accessURL = await panelURL(result.binding.domain)
     }
@@ -80,7 +88,7 @@ async function submit() {
 </script>
 <template>
   <el-dialog v-model="open" :title="binding ? `编辑 ${binding.domain}` : preset ? `为 ${preset.name} 绑定域名` : '绑定域名'" width="min(520px, calc(100vw - 32px))" :close-on-click-modal="false" append-to-body>
-    <el-form ref="formRef" :model="form" :rules="rules" label-position="top" class="dialog-form" @submit.prevent="submit">
+    <el-form :id="formId" ref="formRef" :model="form" :rules="rules" label-position="top" class="dialog-form" @submit.prevent="submit">
       <el-form-item label="域名" prop="domain"><el-input v-model="form.domain" placeholder="例如 blog.example.com" autocomplete="off"/><span class="hint">请先把该域名的 A 记录解析到本服务器。</span></el-form-item>
       <el-form-item v-if="choosing" label="指向" prop="target">
         <el-select v-model="form.target" placeholder="选择项目、网站或面板">
@@ -99,10 +107,11 @@ async function submit() {
         <el-alert v-if="!scanning && !options.length && !error" title="没有可绑定的已发布 TCP 端口，请在 Compose 中添加 ports 映射。" type="info" :closable="false"/>
         <el-form-item label="上游协议"><el-radio-group v-model="form.scheme"><el-radio-button value="http">HTTP</el-radio-button><el-radio-button value="https">HTTPS</el-radio-button></el-radio-group></el-form-item>
       </template>
-      <el-checkbox v-model="form.auto_certificate">自动申请 HTTPS 证书</el-checkbox>
-      <p class="hint">申请证书需要公网 80 端口可达，并在面板设置中同意证书服务条款。</p>
+      <el-checkbox v-model="form.auto_certificate" name="auto_certificate">自动申请 HTTPS 证书</el-checkbox>
+      <AcmeAccountSelect v-if="open && requestsCertificate" v-model="form.accountId"/>
+      <p v-if="requestsCertificate" class="hint">申请证书需要公网 80 端口可达。</p>
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon/>
     </el-form>
-    <template #footer><el-button @click="open = false">取消</el-button><el-button type="primary" :loading="saving" :disabled="scanning" @click="submit">{{ binding ? '保存' : '绑定' }}</el-button></template>
+    <template #footer><el-button @click="open = false">取消</el-button><el-button type="primary" native-type="submit" :form="formId" :loading="saving" :disabled="scanning || (requestsCertificate && !form.accountId)">{{ binding ? '保存' : '绑定' }}</el-button></template>
   </el-dialog>
 </template>
