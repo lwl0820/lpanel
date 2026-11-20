@@ -61,20 +61,20 @@ sudo bash deploy/install.sh --repository lwl0820/lpanel \
 
 ## 在服务器终端管理面板
 
-安装或升级到支持管理命令的版本后，在服务器终端运行以下命令。修改账号或访问设置需要 `sudo`，无需登录网页。
+安装或升级后，可从服务器终端直接运行 `lpanel`。安装程序将 `/usr/local/bin/lpanel` 链接到当前运行版本。修改账号或访问设置需要 `sudo`，无需登录网页。
 
 | 操作 | 命令 |
 | --- | --- |
-| 查看帮助 | `/opt/lpanel/current/lpanel manage --help` |
-| 修改管理员用户名 | `sudo /opt/lpanel/current/lpanel manage username <新用户名>` |
-| 重置管理员密码 | `sudo /opt/lpanel/current/lpanel manage password` |
-| 查看当前登录地址 | `sudo /opt/lpanel/current/lpanel manage access` |
-| 修改访问域名或 IP | `sudo /opt/lpanel/current/lpanel manage access --host <域名或IP>` |
-| 修改面板端口 | `sudo /opt/lpanel/current/lpanel manage access --port 9443` |
-| 修改登录入口 | `sudo /opt/lpanel/current/lpanel manage access --login-path /my-entry` |
-| 恢复根路径登录 | `sudo /opt/lpanel/current/lpanel manage access --login-path /` |
-| 开启或关闭 HTTPS | `sudo /opt/lpanel/current/lpanel manage access --https on` 或 `sudo /opt/lpanel/current/lpanel manage access --https off` |
-| 恢复使用服务器地址通过 HTTP 访问 | `sudo /opt/lpanel/current/lpanel manage access --host auto --https off` |
+| 查看帮助 | `lpanel manage --help` |
+| 修改管理员用户名 | `sudo lpanel manage username <新用户名>` |
+| 重置管理员密码 | `sudo lpanel manage password` |
+| 查看当前登录地址 | `sudo lpanel manage access` |
+| 修改访问域名或 IP | `sudo lpanel manage access --host <域名或IP>` |
+| 修改面板端口 | `sudo lpanel manage access --port 9443` |
+| 修改登录入口 | `sudo lpanel manage access --login-path /my-entry` |
+| 恢复根路径登录 | `sudo lpanel manage access --login-path /` |
+| 开启或关闭 HTTPS | `sudo lpanel manage access --https on` 或 `sudo lpanel manage access --https off` |
+| 恢复使用服务器地址通过 HTTP 访问 | `sudo lpanel manage access --host auto --https off` |
 
 重置密码时，终端会隐藏两次密码输入。重置成功后，原有网页会话需要重新登录。
 
@@ -83,7 +83,7 @@ sudo bash deploy/install.sh --repository lwl0820/lpanel \
 要为公网 IPv4 或 IPv6 开启 HTTPS，可执行以下命令。请将示例中的 IP 替换成服务器的实际地址。面板会向 Let’s Encrypt 申请证书、安装并自动续期。公网必须可以访问服务器的 80 端口和实际面板端口。[HTTP-01 验证说明](https://letsencrypt.org/docs/challenge-types/#http-01-challenge)
 
 ```bash
-sudo /opt/lpanel/current/lpanel manage access --host 203.0.113.10 --https on --agree-tos
+sudo lpanel manage access --host 203.0.113.10 --https on --agree-tos
 ```
 
 首次使用 Let’s Encrypt 时，请先阅读服务条款，再通过 `--agree-tos` 确认。签发失败时面板会提示原因并保留原登录入口。[Let’s Encrypt 服务条款](https://letsencrypt.org/repository/)
@@ -123,7 +123,7 @@ sudo systemctl restart lpanel.service
 
 通过官方安装脚本部署的 LPanel，可以在服务器终端运行 [README 的在线卸载命令](../README.md#在线卸载)。脚本需要管理员权限，会先说明影响并等待确认。
 
-- **仅卸载面板（默认）**。移除面板程序、systemd 服务、续期定时器和面板生成的 Nginx 配置。容器继续运行，项目目录和配置保留。
+- **仅卸载面板（默认）**。移除面板程序、终端命令链接、systemd 服务、续期定时器和面板生成的 Nginx 配置。容器继续运行，项目目录和配置保留。
 - **同时清理 Compose 项目**。列出面板登记的项目和将删除的目录。确认后停止并移除这些项目的容器和网络，删除项目记录、对应的域名绑定和整个项目目录。容器内部未持久化的文件，以及 `./data` 这类保存在项目目录里的相对路径挂载数据，都会随项目删除。Docker 数据卷、镜像、项目目录之外的挂载数据和其他 Docker 项目保留。
 
 两种选项都会停用 LPanel 配置的面板和业务域名入口，已签发的证书也会停止自动续期。面板数据库、管理员账号、证书、项目目录之外的静态网站文件，以及 Docker、Nginx 等系统软件保留。已有数据和 Nginx 会触发安装脚本的环境检查，重新安装前需先处理这些保留项。

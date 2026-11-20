@@ -13,6 +13,7 @@ export PATH="$fixture/bin:$PATH"
 project_id=0123456789abcdef01234567
 export UNINSTALL_TEST_PROJECT="$project_id"
 root="$fixture/panel"
+command_link="$fixture/bin/lpanel"
 config="$fixture/nginx/lpanel.conf"
 project="$root/data/projects/$project_id"
 
@@ -27,6 +28,7 @@ script = Path("deploy/uninstall.sh").read_text()
 for original, replacement in {
     '[[ "$EUID" == 0 ]]': '[[ -n "$UNINSTALL_TEST_ROOT" ]]',
     "root=/opt/lpanel": "root=" + shlex.quote(str(fixture / "panel")),
+    "command_link=/usr/local/bin/lpanel": "command_link=" + shlex.quote(str(fixture / "bin/lpanel")),
     "unit_dir=/etc/systemd/system": "unit_dir=" + shlex.quote(str(fixture / "units")),
     "nginx_conf=/etc/nginx/conf.d/lpanel.conf": "nginx_conf=" + shlex.quote(str(fixture / "nginx/lpanel.conf")),
 }.items():
@@ -62,10 +64,12 @@ done
 
 setup() {
   rm -rf -- "$root" "$fixture/units" "$fixture/nginx" "$fixture/outside"
+  rm -f -- "$command_link"
   : > "$fixture/calls"
   mkdir -p "$root/releases/v0.1.0" "$root/data/acme" "$project/data" \
     "$root/data/projects/unregistered" "$fixture/units" "$fixture/nginx" "$fixture/outside"
   ln -s releases/v0.1.0 "$root/current"
+  ln -s "$root/current/lpanel" "$command_link"
   ln -s "$fixture/outside" "$project/outside-link"
   touch "$root/releases/v0.1.0/lpanel" "$root/data/acme/private-key" "$project/data/content" \
     "$project/compose.yaml" "$project/.env" "$fixture/outside/content" "$fixture/nginx/other.conf"
@@ -95,10 +99,12 @@ uninstall() {
 setup
 uninstall $'y\nn\n'
 [[ ! -s "$fixture/calls" && -f "$project/data/content" && -f "$config" ]]
+[[ -L "$command_link" ]]
 
 uninstall $'\ny\n'
 [[ -f "$project/data/content" && -f "$root/data/panel.db" && -f "$fixture/nginx/other.conf" ]]
 [[ ! -e "$root/current" && ! -L "$root/current" && ! -e "$root/releases" ]]
+[[ ! -L "$command_link" ]]
 [[ ! -e "$config" && ! -e "$fixture/units/lpanel.service" ]]
 if grep -q '^docker ' "$fixture/calls"; then
   echo '仅卸载面板时不应调用 Docker' >&2
@@ -107,6 +113,12 @@ fi
 : > "$fixture/calls"
 uninstall ''
 [[ ! -s "$fixture/calls" ]]
+
+setup
+rm -- "$command_link"
+ln -s "$fixture/outside/content" "$command_link"
+uninstall $'\ny\n'
+[[ "$(readlink "$command_link")" == "$fixture/outside/content" ]]
 
 setup
 if uninstall $'y\ny\n' compose; then exit 1; fi

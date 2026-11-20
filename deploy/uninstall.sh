@@ -10,6 +10,7 @@ fi
 [[ "$EUID" == 0 ]] || fail '请使用 root 或 sudo 执行'
 
 root=/opt/lpanel
+command_link=/usr/local/bin/lpanel
 unit_dir=/etc/systemd/system
 nginx_conf=/etc/nginx/conf.d/lpanel.conf
 database="$root/data/panel.db"
@@ -34,7 +35,7 @@ done
 if [[ -e "$nginx_conf" || -L "$nginx_conf" ]]; then
   [[ -f "$nginx_conf" && ! -L "$nginx_conf" && "$(head -n 1 -- "$nginx_conf")" == '# 本文件由 LPanel 管理' ]] \
     || fail "无法确认 Nginx 配置属于 LPanel，已保留：$nginx_conf"
-elif [[ ! -L "$root/current" && ${#units[@]} -eq 0 ]]; then
+elif [[ ! -L "$root/current" && ${#units[@]} -eq 0 && "$(readlink -- "$command_link" 2>/dev/null)" != "$root/current/lpanel" ]]; then
   echo '未检测到已安装的 LPanel，无需卸载。'
   exit 0
 fi
@@ -158,6 +159,9 @@ for unit in "${units[@]}"; do
   rm -f -- "$unit_dir/$unit" || fail "无法移除服务单元：$unit"
 done
 systemctl daemon-reload || fail '无法重新加载 systemd 配置，请修复后重试'
+if [[ "$(readlink -- "$command_link" 2>/dev/null)" == "$root/current/lpanel" ]]; then
+  rm -- "$command_link" || fail "无法移除命令链接：$command_link"
+fi
 rm -rf -- "$root/releases" || fail '无法删除程序版本目录'
 rm -f -- "$root/current" || fail '无法移除运行版本指针'
 echo "LPanel 已卸载，保留的面板数据位于 $root/data。"

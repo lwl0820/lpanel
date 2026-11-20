@@ -88,6 +88,8 @@ archive="/fixture/$ARCHIVE"
 # 正常首次安装使用真实 bash、tar、Python 和文件操作，仅系统服务/包管理为替身。
 printf '\ntest-password\ntest-password\n\n\n' | bash /source/deploy/install.sh --archive "$archive" > /work/.tmp/install-result
 [[ -f /opt/lpanel/data/config.json && -L /opt/lpanel/current ]]
+[[ "$(readlink /usr/local/bin/lpanel)" == /opt/lpanel/current/lpanel ]]
+[[ "$(lpanel version)" == v0.1.0 ]]
 grep -q '面板安装完成，访问地址：http://' /work/.tmp/install-result
 grep -q -- '--username admin --port 8443' /opt/lpanel/.tmp/cli-arguments
 if grep -q 'test-password' /opt/lpanel/.tmp/cli-arguments; then exit 10; fi
@@ -197,5 +199,11 @@ grep -q -- '--password 缺少参数值' /work/.tmp/missing-value-result
 if bash /source/deploy/install.sh --username cli-admin --password '' </dev/null > /work/.tmp/empty-password-result 2>&1; then exit 17; fi
 grep -q '密码长度须为 8 至 72 字节' /work/.tmp/empty-password-result
 [[ ! -e /opt/lpanel ]]
+rm -- /usr/local/bin/lpanel
+printf '其他程序\n' > /usr/local/bin/lpanel
+bash /source/deploy/install.sh --archive "$archive" --username admin --password test-password --port 8443 --domain '' \
+  </dev/null > /work/.tmp/command-conflict-result 2>&1
+grep -Fxq '其他程序' /usr/local/bin/lpanel
+grep -q '无法创建命令链接' /work/.tmp/command-conflict-result
 echo '安装脚本分支验证通过，覆盖交互、无人值守、登录路径、凭据传递、发行包兼容、重跑保护、端口冲突和证书失败回退。'
 SH

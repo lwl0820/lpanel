@@ -32,7 +32,7 @@ func runManageCommand(args []string) error {
 	command := args[0]
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	root := flags.String("root", "/opt/lpanel", "面板安装目录")
+	root := flags.String("root", installRoot, "面板安装目录")
 	usage := "lpanel manage " + command
 	var host, path, https string
 	var port int

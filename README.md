@@ -76,7 +76,7 @@ curl -fsSL https://raw.githubusercontent.com/lwl0820/lpanel/main/deploy/install.
 sudo bash lpanel-install.sh --repository lwl0820/lpanel --username admin --port 8443
 ```
 
-安装参数填齐后可无人值守执行。 [安装参数和示例](docs/install.md#命令行参数)
+安装参数填齐后可无人值守执行。安装完成后可用 `lpanel manage --help` 查看终端管理命令。 [安装参数和示例](docs/install.md#命令行参数) · [终端管理说明](docs/install.md#在服务器终端管理面板)
 
 ## 在线卸载
 

@@ -322,4 +322,12 @@ PY
 systemctl is-active --quiet nginx.service lpanel.service || fail '面板或 Nginx 服务未正常运行'
 status="$(curl -fsS "${probe_args[@]}" -o /dev/null -w '%{http_code}' "$probe_url$login_path")" && [[ "$status" == 200 ]] || fail 'Nginx 面板入口验证失败，请检查服务日志'
 echo "面板安装完成，访问地址：$url$login_path"
+command_link=/usr/local/bin/lpanel
+command_target="$root/current/lpanel"
+if [[ "$(readlink -- "$command_link" 2>/dev/null)" == "$command_target" ]] ||
+  { mkdir -p -- "${command_link%/*}" && ln -sT -- "$command_target" "$command_link"; }; then
+  echo '终端命令已安装：lpanel'
+else
+  echo "无法创建命令链接 $command_link，可使用 $command_target。" >&2
+fi
 [[ "$certificate_failed" != y ]] || echo '证书未启用，HTTP 安装已完成，HTTPS 仍需重试。'

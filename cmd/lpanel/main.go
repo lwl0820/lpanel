@@ -9,9 +9,12 @@ import (
 	"lpanel/internal/panel"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 )
+
+const installRoot = "/opt/lpanel"
 
 var version = "dev"
 
@@ -34,7 +37,7 @@ func run() error {
 		return runManageCommand(args)
 	}
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
-	root := flags.String("root", "/opt/lpanel", "安装根目录")
+	root := flags.String("root", installRoot, "安装根目录")
 	username := flags.String("username", "admin", "管理员账号")
 	port := flags.Int("port", 8443, "面板端口")
 	listen := flags.String("listen", "127.0.0.1:18080", "后端回环地址")
@@ -173,6 +176,21 @@ func run() error {
 			return err
 		}
 		defer app.Close()
+		if app.Root == installRoot && os.Geteuid() == 0 {
+			// 旧版升级程序会启动新版服务，由新版补建终端命令链接。
+			const link = "/usr/local/bin/lpanel"
+			target := filepath.Join(installRoot, "current", "lpanel")
+			if existing, _ := os.Readlink(link); existing != target {
+				if _, err := os.Stat(target); err == nil {
+					if err = os.MkdirAll(filepath.Dir(link), 0755); err == nil {
+						err = os.Symlink(target, link)
+					}
+					if err != nil {
+						log.Printf("无法创建命令链接 %s：%v", link, err)
+					}
+				}
+			}
+		}
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 		return app.Serve(ctx)
