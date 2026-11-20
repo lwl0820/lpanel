@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -18,6 +19,22 @@ type Site struct {
 	Directory string `json:"directory"`
 	SPA       bool   `json:"spa"`
 	UpdatedAt string `json:"updated_at"`
+}
+
+type siteBindingInput struct {
+	Domain          string `json:"domain"`
+	AutoCertificate bool   `json:"auto_certificate"`
+}
+
+func (s Site) domainBinding(input siteBindingInput) Binding {
+	return Binding{Kind: "site", ResourceID: s.ID, Domain: input.Domain, Directory: s.Directory, SPA: s.SPA, AutoCertificate: input.AutoCertificate}
+}
+
+type siteSaveResult struct {
+	Site
+	Binding          *Binding   `json:"binding,omitzero"`
+	Operation        *Operation `json:"operation,omitzero"`
+	CertificateError string     `json:"certificate_error,omitempty"`
 }
 
 func (a *App) RegisterSiteRoutes() error {
@@ -65,30 +82,35 @@ func (a *App) RegisterSiteRoutes() error {
 			WriteError(w, 404, "not_found", "网站不存在")
 			return
 		}
-		var input struct {
-			Domain          string `json:"domain"`
-			AutoCertificate bool   `json:"auto_certificate"`
-		}
+		var input siteBindingInput
 		if !ReadJSON(w, r, &input) {
 			return
 		}
-		b, err := a.SaveBinding(r.Context(), Binding{Kind: "site", ResourceID: s.ID, Domain: input.Domain, Directory: s.Directory, SPA: s.SPA, AutoCertificate: input.AutoCertificate})
+		b, err := a.SaveBinding(r.Context(), s.domainBinding(input))
 		if err != nil {
 			WriteError(w, 400, "binding_error", err.Error())
 			return
 		}
-		var operation *Operation
-		if input.AutoCertificate {
-			op, e := a.StartOperation("certificate", func(ctx context.Context) (string, error) { return "", a.RequestCertificate(ctx, b.ID) })
-			if e != nil {
-				WriteError(w, 500, "operation_error", e.Error())
-				return
-			}
-			operation = &op
+		operation, err := a.startSiteCertificate(b)
+		if err != nil {
+			WriteError(w, 500, "operation_error", err.Error())
+			return
 		}
 		WriteJSON(w, 201, map[string]any{"binding": b, "operation": operation, "access_url": a.BindingURL(b)})
 	})))
 	return nil
+}
+func (a *App) startSiteCertificate(binding Binding) (*Operation, error) {
+	if !binding.AutoCertificate {
+		return nil, nil
+	}
+	op, err := a.StartOperation("certificate", func(ctx context.Context) (string, error) {
+		return "", a.RequestCertificate(ctx, binding.ID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &op, nil
 }
 func (a *App) site(ctx context.Context, id string) (Site, error) {
 	var s Site
@@ -96,66 +118,125 @@ func (a *App) site(ctx context.Context, id string) (Site, error) {
 	return s, err
 }
 func (a *App) saveSite(w http.ResponseWriter, r *http.Request) {
-	var s Site
-	if !ReadJSON(w, r, &s) {
+	var input struct {
+		Site
+		Binding *siteBindingInput `json:"binding"`
+	}
+	if r.Method == http.MethodPost {
+		if !ReadJSON(w, r, &input) {
+			return
+		}
+	} else if !ReadJSON(w, r, &input.Site) {
 		return
 	}
-	s.ID = r.PathValue("id")
-	if s.ID != "" {
-		if _, err := a.site(r.Context(), s.ID); err != nil {
+	input.ID = r.PathValue("id")
+	if input.ID != "" {
+		if _, err := a.site(r.Context(), input.ID); err != nil {
 			WriteError(w, 404, "not_found", "网站不存在")
 			return
 		}
 	}
-	saved, err := a.SaveSite(r.Context(), s)
+	saved, err := a.saveSiteWithBinding(r.Context(), input.Site, input.Binding)
 	if err != nil {
 		WriteError(w, 400, "site_error", err.Error())
 		return
 	}
 	status := 200
-	if r.Method == "POST" {
+	if r.Method == http.MethodPost {
 		status = 201
+	}
+	if saved.Binding != nil {
+		saved.Operation, err = a.startSiteCertificate(*saved.Binding)
+		if err != nil {
+			saved.CertificateError = "无法启动证书申请，可在域名与证书中重新申请"
+		}
 	}
 	WriteJSON(w, status, saved)
 }
 func (a *App) SaveSite(ctx context.Context, s Site) (Site, error) {
+	saved, err := a.saveSiteWithBinding(ctx, s, nil)
+	return saved.Site, err
+}
+func (a *App) saveSiteWithBinding(ctx context.Context, s Site, input *siteBindingInput) (siteSaveResult, error) {
 	s.Name = strings.TrimSpace(s.Name)
 	if s.Name == "" || len(s.Name) > 100 {
-		return s, fmt.Errorf("网站名称不能为空且不能超过100字节")
+		return siteSaveResult{Site: s}, fmt.Errorf("网站名称不能为空且不能超过100字节")
 	}
-	if !filepath.IsAbs(s.Directory) || strings.ContainsAny(s.Directory, "\n\r\"$;") {
-		return s, fmt.Errorf("请输入有效的服务器绝对目录")
-	}
-	s.Directory = filepath.Clean(s.Directory)
-	info, err := os.Stat(s.Directory)
-	if err != nil || !info.IsDir() {
-		return s, fmt.Errorf("网站目录不存在或无法访问")
-	}
-	a.domainsMu.Lock()
-	defer a.domainsMu.Unlock()
-	old, oldErr := a.site(ctx, s.ID)
-	if s.ID == "" {
+	creating := s.ID == ""
+	allocateDirectory := creating && strings.TrimSpace(s.Directory) == ""
+	if creating {
 		raw := make([]byte, 12)
-		if _, err = rand.Read(raw); err != nil {
-			return s, err
+		if _, err := rand.Read(raw); err != nil {
+			return siteSaveResult{Site: s}, err
 		}
 		s.ID = hex.EncodeToString(raw)
-	} else if oldErr != nil {
-		return s, fmt.Errorf("网站不存在")
 	}
-	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	bindings, err := a.ListBindings(ctx)
-	if err != nil {
-		return s, err
-	}
-	changed := []Binding{}
-	for _, b := range bindings {
-		if b.Kind == "site" && b.ResourceID == s.ID {
-			changed = append(changed, b)
+	if allocateDirectory {
+		s.Directory = filepath.Join(a.Root, "sites", s.ID)
+	} else {
+		if !filepath.IsAbs(s.Directory) || strings.ContainsAny(s.Directory, "\n\r\"$;") {
+			return siteSaveResult{Site: s}, fmt.Errorf("请输入有效的服务器绝对目录")
+		}
+		s.Directory = filepath.Clean(s.Directory)
+		info, err := os.Stat(s.Directory)
+		if err != nil || !info.IsDir() {
+			return siteSaveResult{Site: s}, fmt.Errorf("网站目录不存在或无法访问")
 		}
 	}
+	result := siteSaveResult{Site: s}
+	a.domainsMu.Lock()
+	defer a.domainsMu.Unlock()
+	var old Site
+	var err error
+	var changed []Binding
+	if !creating {
+		old, err = a.site(ctx, s.ID)
+		if err != nil {
+			return result, fmt.Errorf("网站不存在")
+		}
+		bindings, err := a.ListBindings(ctx)
+		if err != nil {
+			return result, err
+		}
+		for _, b := range bindings {
+			if b.Kind == "site" && b.ResourceID == s.ID {
+				changed = append(changed, b)
+			}
+		}
+	}
+	siteSaved := false
+	if allocateDirectory {
+		if err := os.MkdirAll(filepath.Dir(s.Directory), 0755); err != nil {
+			return result, fmt.Errorf("无法创建公开网站目录：%w", err)
+		}
+		if err := os.Mkdir(s.Directory, 0755); err != nil {
+			return result, fmt.Errorf("无法创建默认网站目录：%w", err)
+		}
+		defer func() {
+			if !siteSaved {
+				// 内容可能由管理员写入，只回收本次创建且仍为空的目录。
+				_ = os.Remove(s.Directory)
+			}
+		}()
+	}
+	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	result.Site = s
 	if _, err = a.DB.ExecContext(ctx, "INSERT INTO sites(id,name,directory,spa,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,directory=excluded.directory,spa=excluded.spa,updated_at=excluded.updated_at", s.ID, s.Name, s.Directory, s.SPA, s.UpdatedAt); err != nil {
-		return s, err
+		return result, err
+	}
+	siteSaved = true
+	if input != nil {
+		binding, err := a.saveBindingLocked(ctx, s.domainBinding(*input))
+		if err != nil {
+			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if _, rollbackErr := a.DB.ExecContext(rollbackCtx, "DELETE FROM sites WHERE id=?", s.ID); rollbackErr != nil {
+				return result, errors.Join(err, fmt.Errorf("回收网站记录失败：%w", rollbackErr))
+			}
+			siteSaved = false
+			return result, err
+		}
+		result.Binding = &binding
 	}
 	for _, b := range changed {
 		b.Directory = s.Directory
@@ -171,14 +252,10 @@ func (a *App) SaveSite(ctx context.Context, s Site) (Site, error) {
 		for _, b := range changed {
 			_ = a.storeBinding(ctx, b)
 		}
-		if oldErr == nil {
-			_, _ = a.DB.ExecContext(ctx, "UPDATE sites SET name=?,directory=?,spa=?,updated_at=? WHERE id=?", old.Name, old.Directory, old.SPA, old.UpdatedAt, old.ID)
-		} else {
-			_, _ = a.DB.ExecContext(ctx, "DELETE FROM sites WHERE id=?", s.ID)
-		}
-		return s, err
+		_, _ = a.DB.ExecContext(ctx, "UPDATE sites SET name=?,directory=?,spa=?,updated_at=? WHERE id=?", old.Name, old.Directory, old.SPA, old.UpdatedAt, old.ID)
+		return result, err
 	}
-	return s, nil
+	return result, nil
 }
 func (a *App) DeleteSite(ctx context.Context, id string) error {
 	a.domainsMu.Lock()

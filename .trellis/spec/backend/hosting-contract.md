@@ -9,6 +9,7 @@
 - RegisterProjectRoutes、RegisterSiteRoutes、RegisterUpgradeRoutes 在 Open 中创建表并注册接口；域名由 registerDomains 接入。
 - SaveBinding(ctx, Binding)、DeleteBinding(ctx, id)、ApplyNginx(ctx)、RequestCertificate(ctx, id)、RenewCertificates(ctx) 是项目、网站和面板实际复用的边界。
 - SaveSite(ctx, Site)、DeleteSite(ctx, id) 同步网站记录和关联绑定。
+- `POST /api/v1/sites` 支持可选 `binding: {domain, auto_certificate}`。响应为 `201` 和原顶层网站字段，可附加 `binding`、`operation` 或 `certificate_error`。
 - UpgradeWorker(ctx, root, version, operationID, releaseDir) 在独立 systemd service 中执行版本切换。
 - CLI：setup-nginx --root；bind-panel --root --domain [--auto-cert --agree-tos --email --acme-server]；renew --root；upgrade-worker 由内部升级流程调用。
 - 官方安装布局的卸载入口为 `sudo bash deploy/uninstall.sh`。脚本从终端询问是否清理 Compose 项目，并单独读取最终确认。
@@ -16,6 +17,8 @@
 ## 3. 数据与环境契约
 
 Binding 包含 id、kind(panel/project/site)、resource_id、domain、upstream、directory、spa、service、container_port、auto_certificate、certificate_status、certificate_error、expires_at。域名全局唯一；项目使用真实发布端口生成 upstream，网站使用 directory/spa，面板使用安装配置端口。
+
+新建网站的 `directory` 留空时分配 `Root/sites/<ID>/`，自动分配的目录可供 Nginx 遍历，内容位于私有 `data/` 和版本目录之外。手动指定时沿用已存在的绝对目录及其权限。编辑网站仍需给定目录。
 
 Compose config 输出的 published 是字符串，可能缺失或为动态端口/范围；expose 是含协议/范围的字符串数组。ps 返回 JSON Lines 或空内容，项目代码也兼容数组。仅 expose 不生成不可达上游，UDP 不作为网站代理。项目列表不返回环境变量秘密，编辑详情才返回配置。
 
@@ -31,6 +34,8 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 | --- | --- |
 | Compose 校验失败或 Docker 不可用 | 显示实际错误，不把保存配置当成部署成功 |
 | 网站目录无效 | 拒绝保存，不递归修改用户目录权限 |
+| 建站时域名绑定失败 | 回收本次新建记录与仍为空的自动目录，自定义目录及旧绑定保留 |
+| 建站的 HTTP 绑定已生效，证书任务无法排入 | 返回 `201`、网站和绑定，并带 `certificate_error`，可从域名管理重试 |
 | Nginx 检查或生效失败 | nginx -t/reload 返回 0 也须回读标识；失败以独立超时上下文恢复原文件、重载及绑定状态，不能误报证书已启用 |
 | 首次签发失败 | 失败原因可见，保留 HTTP；续期失败则保留已有 HTTPS |
 | 不同进程打开数据库 | CLI Open 不重置主服务运行中操作，只有 Serve 启动恢复中断状态 |
@@ -44,6 +49,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 正常：配置扫描→部署→读取真实端口→绑定→证书；网站编辑同步已有域名配置；系统独立 worker 升级并保存结果。
 基础：无发布源显示未配置，无域名可用 IP:端口管理，无证书不阻止 HTTP 网站使用。
+建站：留空目录分配新目录，填写域名建立 HTTP 入口。勾选证书后再启动后台申请，证书失败时保留 HTTP，删除网站时保留内容目录。
 失败：无效 Nginx 配置回退旧文件；网站保存/删除失败恢复旧记录；删除项目不使用 --volumes，删除网站不删除内容目录。
 卸载：默认路径可在保留业务容器的情况下停用面板。清理选项在最终确认前列出项目和目录，重复执行已完成的卸载时提示无需操作。
 
@@ -53,9 +59,13 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 `bash tests/uninstall-smoke.sh` 在仓库 `.tmp` 中用实际文件和 SQLite 验证取消、默认保留、选中项目清理、失败恢复和重复执行。Docker、Nginx、systemd 使用命令替身。
 
+`internal/panel/sites_test.go` 覆盖默认目录、建站即绑 HTTP、首次绑定回滚及证书任务启动或签发失败时的保留行为。
+
 ## 7. 错误与正确用法
 
 错误：让证书续期 CLI 调用 Open 时把全部 running 操作置为 failed；把 ps JSON Lines 直接当整体数组解析；仅因版本号较新就认为有可用发行包。
 正确：仅 Serve 启动时恢复普通中断操作；按真实 CLI 输出解析；版本、附件和检查结果共同决定是否可升级。CLI 绑定面板 HTTPS 后重启主服务，确保 Secure Cookie 与磁盘配置一致。
 
 卸载清理以登记项目为单位，仅在 `down --remove-orphans` 成功后清理目录和记录。全局 Docker 清理或按项目名前缀批量删除会影响其他业务资源。
+
+建站默认目录应位于 `Root/sites/`。将内容放在权限为 `0700` 的 `data/` 会阻止 Nginx 读取。证书申请在 HTTP 绑定确认生效后开始，页面通过任务最终结果确认 HTTPS。

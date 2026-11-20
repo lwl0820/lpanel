@@ -6,11 +6,17 @@
 ## 2. 签名
 request<T>(path: string, options?: RequestInit): Promise<T> 统一调用 /api/v1；auth.me/login/logout 对应后端账号接口。APIError 保存 status、code、message，页面显示中文 message。
 
+`sites.create` 提交网站字段及可选 `binding`，返回网站、可选绑定与证书操作。`sites.update` 继续使用原网站字段。
+
 ## 3. 数据与状态
 成功直接返回后端 JSON，无 data 包装；错误读取 error.code 和 error.message。fetch 发送 same-origin Cookie。User 只有 username；Operation 包含 id/kind/status/log/error/created_at/updated_at。局部状态使用 ref/computed，不引入没有共享需求的状态框架。
 
+创建表单允许目录留空，列表显示响应对应的实际路径。填写域名后可选自动申请 HTTPS。证书操作期间新网站显示 HTTP 绑定，操作完成后刷新正式状态。
+
 ## 4. 校验与错误矩阵
 未登录返回 401 后显示登录页；网络或其他服务错误显示中文错误，不能当成已登录或操作成功。网络连接失败使用 APIError(0, network_error)，Nginx 返回 HTML 等非 JSON 内容使用 invalid_response 并保留 HTTP 状态。表单提交期间显示 loading，成功后清理密码。长操作需等待操作结果再显示成功，不能把请求提交成功当成完成。
+
+建站时绑定校验或生效失败，在弹窗保留填写项。返回 `201` 且带 `certificate_error` 时，显示已创建的 HTTP 网站和重试说明；后台操作失败通过 `OperationBanner` 显示原因，并提供域名与证书入口。
 
 ## 5. 正常、基础与失败案例
 正常：登录后显示真实管理员与版本；退出回到登录页。

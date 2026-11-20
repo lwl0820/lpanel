@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,6 +19,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 type Binding struct {
@@ -159,6 +163,9 @@ func (a *App) storeBinding(ctx context.Context, b Binding) error {
 func (a *App) SaveBinding(ctx context.Context, b Binding) (Binding, error) {
 	a.domainsMu.Lock()
 	defer a.domainsMu.Unlock()
+	return a.saveBindingLocked(ctx, b)
+}
+func (a *App) saveBindingLocked(ctx context.Context, b Binding) (Binding, error) {
 	b.Domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(b.Domain), "."))
 	if !regexp.MustCompile(`^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$`).MatchString(b.Domain) || len(b.Domain) > 253 {
 		return b, fmt.Errorf("请输入有效的普通域名")
@@ -212,7 +219,10 @@ func (a *App) SaveBinding(ctx context.Context, b Binding) (Binding, error) {
 		}
 	}
 	if err := a.storeBinding(ctx, b); err != nil {
-		return b, fmt.Errorf("保存域名失败，域名可能已被使用：%w", err)
+		if sqliteErr, ok := errors.AsType[*sqlite.Error](err); ok && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+			return b, errors.New("该域名已被使用")
+		}
+		return b, fmt.Errorf("保存域名失败：%w", err)
 	}
 	if err := a.applyNginx(ctx); err != nil {
 		rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -387,7 +397,7 @@ func (a *App) applyNginx(ctx context.Context) error {
 		return fmt.Errorf("Nginx 配置未确认生效：%w（恢复结果：%v）", err, restoreErr)
 	}
 	if err = SaveConfig(a.Root, config); err != nil {
-		return err
+		return errors.Join(fmt.Errorf("保存面板配置失败：%w", err), rollback())
 	}
 	a.Config = config
 	return nil
