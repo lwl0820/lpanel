@@ -1,18 +1,15 @@
 # 前端开发规范
 
-## 开发前检查
-阅读当前任务三份规划文档，再阅读[API 与页面契约](./api-contract.md)。使用 Vue 3、TypeScript、Element Plus；产品界面使用中文，不展示开发需求和内部任务说明。
+开发前阅读当前任务的需求与设计，再查看前端 API、目录和组件约定。项目使用 Vue 3、TypeScript 和 Element Plus。产品文案应使用管理员能直接理解的中文，展示操作入口、结果和可执行的处理方式。
 
-## 规范目录
-| 文档 | 状态 |
+| 文档 | 适用范围 |
 | --- | --- |
-| [API 与页面契约](./api-contract.md) | 已从代码落实 |
-| [目录结构](./directory-structure.md) | 已从代码落实 |
-| [组件](./component-guidelines.md) | 已从代码落实，含公共组件和长操作用法 |
-| [组合式逻辑](./hook-guidelines.md) | 初始化模板，不要求提前抽取组合函数 |
-| [状态管理](./state-management.md) | 初始化模板，当前使用局部响应式状态 |
-| [质量](./quality-guidelines.md) | 初始化模板，检查命令见下方 |
-| [类型](./type-safety.md) | 初始化模板，以实际 API 类型为准 |
+| [API 与页面契约](./api-contract.md) | 请求、错误、创建网站和后台操作 |
+| [目录结构](./directory-structure.md) | 页面、组件和 API 模块的位置 |
+| [组件](./component-guidelines.md) | 共享组件、表单、列表与操作提示 |
+| [组合式逻辑](./hook-guidelines.md) | 页面状态、操作轮询与取消 |
+| [状态管理](./state-management.md) | 登录、局部状态和升级重连 |
+| [质量](./quality-guidelines.md) | 类型检查、lint、构建和浏览器验证 |
+| [类型](./type-safety.md) | 请求与响应类型、状态和组件事件 |
 
-## 质量检查
-运行 npm --prefix web run typecheck、lint、test -- --run、build。页面交互需验证加载、空态、错误和完成状态；不能只凭构建成功宣称完整交互验收通过。
+按改动范围运行类型检查、lint、测试和生产构建。界面改动在浏览器核对受影响的交互和状态。接口与状态契约一起变化时，同步核对 API 模块和页面调用。

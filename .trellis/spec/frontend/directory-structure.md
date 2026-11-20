@@ -24,9 +24,9 @@ web/src/
 
 ## 模块组织
 - 新页面：新增 `views/XxxView.vue`，在 `router.ts` 加路由和 `meta.title`，在 `App.vue` 的导航数组加一项。
-- 只有一个页面用的对话框、抽屉写在该页面文件里；第二个页面也要用，或页面超过约 250 行时，再移到 `components/`。
-- 计算、格式化、轮询等不含 Vue 状态的逻辑写成 `.ts` 模块并配 `*.test.ts`。vitest 在 node 环境运行，这些模块不能引入 `.vue` 文件或 Element Plus。
-- 界面改动不修改 `*-api.ts`，它们与后端接口一一对应。
+- 页面专用的对话框和抽屉留在该页面。多个页面共用的界面，或有独立职责的界面区域，可移到 `components/`。
+- 共用的计算、格式化和轮询等纯逻辑放在 `.ts` 模块。Vitest 在 Node.js 环境运行，纯逻辑模块应可独立测试。按实际回归风险补充 `*.test.ts`。
+- 界面调整集中在页面和组件。接口变化时同步更新对应的 `*-api.ts` 与调用方。
 
 ## 命名
 - 页面 `XxxView.vue`；公共组件用 PascalCase 名词（`RowMenu.vue`）；组合函数 `useXxx.ts`。
