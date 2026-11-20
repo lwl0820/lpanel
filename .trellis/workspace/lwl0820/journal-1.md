@@ -234,3 +234,29 @@
 ### Next Steps
 
 - 公网 HTTPS 安装由维护者在目标服务器人工验收。
+
+
+## Session 8: 调整安装脚本证书默认值
+<!-- trellis-session: v=2 fp=16b06298bdf5e8a7 -->
+
+**Date**: 2026-11-20
+**Task**: 调整安装脚本证书默认值
+**Branch**: `main`
+
+### Summary
+
+填写面板域名后，申请证书和同意条款均默认选 y，联系邮箱默认使用 acme@面板域名。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `72903627a9ca5b9b163f88f5c384bcccc074572b` | feat: 调整安装脚本证书默认值 |
+
+### Testing
+
+- [OK] Bash 语法检查及独立 Linux 命名空间中的安装冒烟测试通过，证书签发使用测试替身。
+
+### Status
+
+[OK] **Completed**
