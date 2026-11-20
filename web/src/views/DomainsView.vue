@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Operation } from '../api'
 import { acme, type ACMEAccount } from '../acme-api'
-import { domains, type Binding } from '../domain-api'
+import { domains, isWildcardHostname, type Binding } from '../domain-api'
 import { projects, type Project } from '../projects-api'
 import { sites, type Site } from '../sites-api'
 import { certificateActionLabel, certState, daysLeft } from '../cert'
@@ -45,7 +45,8 @@ const KIND = { panel: '面板', project: '容器项目', site: '静态网站' }
 function target(b: Binding) {
   if (b.kind === 'panel') return { name: '本面板', detail: '' }
   if (b.kind === 'project') return { name: projectList.value.find(p => p.id === b.resource_id)?.name ?? '已删除的项目', detail: `${b.service}:${b.container_port}` }
-  return { name: siteList.value.find(s => s.id === b.resource_id)?.name ?? '已删除的网站', detail: b.directory || siteList.value.find(s => s.id === b.resource_id)?.directory || '' }
+  const site = siteList.value.find(s => s.id === b.resource_id)
+  return { name: site?.identifier ?? '已删除的网站', detail: b.directory || site?.directory || '' }
 }
 function certificateAccount(b: Binding) {
   const account = accountsById.value.get(b.certificate_account_id ?? '')
@@ -71,7 +72,7 @@ async function remove(b: Binding) {
   try { await domains.remove(b.id); ElMessage.success('已解除绑定'); await load() } catch (e) { ElMessage.error(errorText(e, '解除失败')) } finally { busy.value = false }
 }
 const menu = (b: Binding): MenuItem[] => [
-  { label: certificateActionLabel(b), icon: 'cert', onSelect: () => certificate(b) },
+  ...(isWildcardHostname(b.domain) ? [] : [{ label: certificateActionLabel(b), icon: 'cert', onSelect: () => certificate(b) } satisfies MenuItem]),
   { label: '编辑', icon: 'edit', onSelect: () => edit(b) },
   ...(b.kind === 'panel' ? [] : [{ label: '解除绑定', icon: 'trash', danger: true, divided: true, onSelect: () => remove(b) } satisfies MenuItem]),
 ]
@@ -106,7 +107,10 @@ async function done(result: BindResult) {
             <tr v-for="b in items" :key="b.id">
               <td class="first"><span class="name">{{ b.domain }}</span><span class="sub"><span class="tag">{{ KIND[b.kind] }}</span></span></td>
               <td data-label="指向">{{ target(b).name }}<span v-if="target(b).detail" :class="['muted', { mono: b.kind === 'site' }]"> · {{ target(b).detail }}</span></td>
-              <td data-label="证书"><span><CertPill :state="certState(b, now)"/><span v-if="b.certificate_account_id" class="sub">{{ certificateAccount(b) }}</span><span v-if="b.certificate_error" class="err-line">{{ b.certificate_error }}</span></span></td>
+              <td data-label="证书">
+                <span v-if="isWildcardHostname(b.domain)" class="tag">仅 HTTP</span>
+                <span v-else><CertPill :state="certState(b, now)"/><span v-if="b.certificate_account_id" class="sub">{{ certificateAccount(b) }}</span><span v-if="b.certificate_error" class="err-line">{{ b.certificate_error }}</span></span>
+              </td>
               <td data-label="到期" class="num"><template v-if="b.expires_at && b.certificate_status !== 'failed' && daysLeft(b.expires_at, now) !== null">{{ formatDate(b.expires_at) }}<span class="sub">剩 {{ daysLeft(b.expires_at, now) }} 天</span></template><span v-else class="muted">—</span></td>
               <td class="actions"><span class="row-act"><RowMenu :items="menu(b)" :label="b.domain" :disabled="busy"/></span></td>
             </tr>

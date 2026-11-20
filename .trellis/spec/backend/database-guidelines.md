@@ -6,8 +6,8 @@
 
 ```go
 err := a.DB.QueryRowContext(ctx,
-    "SELECT id,name,directory,spa,updated_at FROM sites WHERE id=?", id,
-).Scan(&s.ID, &s.Name, &s.Directory, &s.SPA, &s.UpdatedAt)
+    "SELECT id,name,directory,spa,note,updated_at FROM sites WHERE id=?", id,
+).Scan(&s.ID, &s.Identifier, &s.Directory, &s.SPA, &s.Note, &s.UpdatedAt)
 ```
 
 列表查询关闭 `rows` 并检查 `rows.Err()`。先读完并关闭结果集再开始下一次数据库操作，避免占用唯一连接。 [站点查询](../../../internal/panel/sites.go) · [域名列表](../../../internal/panel/domains.go)

@@ -2,6 +2,7 @@ import { request, type Operation } from './api'
 export interface Binding { id: string; kind: 'panel'|'project'|'site'; resource_id: string; domain: string; upstream: string; directory: string; spa: boolean; service: string; container_port: number; auto_certificate: boolean; certificate_status: string; certificate_error: string; expires_at: string; certificate_account_id?: string }
 export interface Access { panel_port: number; panel_domain: string; https: boolean; login_path: string }
 export interface BindingResult { binding: Binding; operation: Operation|null; access_url: string }
+export const isWildcardHostname = (hostname: string) => hostname.startsWith('*.')
 export function panelLoginURL(access: Access, host = access.panel_domain || window.location.hostname, https = access.https): string {
   return `${https ? 'https' : 'http'}://${host}:${access.panel_port}${access.login_path || '/'}`
 }

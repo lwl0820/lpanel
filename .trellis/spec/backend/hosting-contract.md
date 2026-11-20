@@ -9,7 +9,7 @@
 - RegisterProjectRoutes、RegisterSiteRoutes、RegisterUpgradeRoutes 在 Open 中创建表并注册接口；域名由 registerDomains 接入。
 - SaveBinding(ctx, Binding)、DeleteBinding(ctx, id)、ApplyNginx(ctx)、RequestCertificate(ctx, id)、RenewCertificates(ctx) 是项目、网站和面板复用的边界。需指定账户时使用 SaveBindingWithAccount 和 RequestCertificateWithAccount。
 - SaveSite(ctx, Site)、DeleteSite(ctx, id) 同步网站记录和关联绑定。
-- `POST /api/v1/sites` 支持可选 `binding: {domain, auto_certificate, acme_account_id}`。响应为 `201` 和原顶层网站字段，可附加 `binding`、`operation` 或 `certificate_error`。其余域名绑定与手动申请入口也接受可选 `acme_account_id`。
+- `POST /api/v1/sites` 接收 `hostnames` 字符串数组、`identifier`、`note`、`directory`、`spa` 和可选的 `auto_certificate`、`acme_account_id`。成功返回 `201`、顶层网站字段、`bindings` 数组及可选的 `operation` 或 `certificate_error`。`PUT /api/v1/sites/{id}` 保存 `identifier`、`note`、`directory` 和 `spa`。单独绑定域名与手动申请入口继续接受可选 `acme_account_id`。
 - `GET /api/v1/acme/accounts` 返回 `accounts`、`providers` 和 `default_account_id`。在该路径通过 POST 新增账户，通过 PUT 或 DELETE 操作 `/{id}` 下的账户。输入使用 `name`、`provider`、`email`、`agree_tos` 和可选的 `eab_kid`、`eab_hmac_key`。账户响应包含 `provider_name` 与 `needs_eab`，新建 ZeroSSL 账户已保存但注册失败时返回 `201` 和 `needs_eab: true`，可编辑后重试。
 - UpgradeWorker(ctx, root, version, operationID, releaseDir) 在独立 systemd service 中执行版本切换。
 - CLI 支持 `setup-nginx --root`、`bind-panel --root --domain`、`renew --root`。绑定时可用 `--auto-cert`、`--agree-tos`、`--email`、`--acme-provider`、`--acme-eab-file` 和兼容的 `--acme-server`。内部升级调用 `upgrade-worker`。
@@ -22,7 +22,11 @@ Binding 包含 id、kind(panel/project/site)、resource_id、domain、upstream�
 
 证书账户从 SQLite 按加入顺序读取，最早的现有账户为默认。无账户时 `default_account_id` 为 `null`。提供商标识为 `letsencrypt`、`zerossl` 及旧自定义地址对应的兼容值。新账户用独立的 `Root/data/acme-accounts/<ID>`，已迁移旧账户用原 `Root/data/acme`。旧证书原地保留。签发使用所选账户，定时续期按绑定实际账户和域名读取 Certbot 保存的签发配置。
 
-新建网站的 `directory` 留空时分配 `Root/sites/<ID>/`，自动分配的目录可供 Nginx 遍历，内容位于私有 `data/` 和版本目录之外。手动指定时沿用已存在的绝对目录及其权限。编辑网站仍需给定目录。
+新建网站至少有一个主机名。主机名统一小写，忽略首尾空白、尾随点和空行。留空的 `identifier` 取第一个主机名。标识独立于内部 ID，数据库沿用 `sites.name` 保存并建立唯一索引，新增 `note` 列。旧数据中重复的名称获得唯一后缀，目录与绑定继续按原记录使用。
+
+新建网站的 `directory` 留空时，在 `Root/sites/` 下按标识分配可供 Nginx 遍历的网页目录。目录名中的不安全字符替换为 `_`。例如 `*.example.com` 对应 `_.example.com`。手动指定时沿用已存在的绝对目录及其权限。编辑网站时传回已保存或用户手动指定的目录。
+
+静态网站支持 `*.example.com` 形式的通配符 HTTP 绑定。普通域名可以和通配符同时绑定并自动申请 HTTPS。自动签发由一个后台操作逐个处理普通域名，每个域名独立保存签发结果。
 
 Compose config 输出的 published 是字符串，可能缺失或为动态端口/范围；expose 是含协议/范围的字符串数组。ps 返回 JSON Lines 或空内容，项目代码也兼容数组。仅 expose 不生成不可达上游，UDP 不作为网站代理。项目列表不返回环境变量秘密，编辑详情才返回配置。
 
@@ -46,8 +50,11 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 | --- | --- |
 | Compose 校验失败或 Docker 不可用 | 显示实际错误，不把保存配置当成部署成功 |
 | 网站目录无效 | 拒绝保存，不递归修改用户目录权限 |
-| 建站时域名绑定失败 | 回收本次新建记录与仍为空的自动目录，自定义目录及旧绑定保留 |
+| 网站标识已存在 | 提示更换网站标识 |
+| 默认目录已存在 | 提示修改标识或指定已有的网页目录，保留目录中的数据 |
+| 建站时主机名无效、被占用或配置无法生效 | 整批失败，回收本次新建记录、绑定与仍为空的自动目录，自定义目录及旧绑定保留 |
 | 建站的 HTTP 绑定已生效，证书任务无法排入 | 返回 `201`、网站和绑定，并带 `certificate_error`，可从域名管理重试 |
+| 通配符绑定申请证书 | 拒绝申请，继续提供 HTTP |
 | Nginx 检查或生效失败 | nginx -t/reload 返回 0 也须回读标识；失败以独立超时上下文恢复原文件、重载及绑定状态，不能误报证书已启用 |
 | 首次签发失败 | 失败原因可见，保留 HTTP；续期失败则保留已有 HTTPS |
 | 删除账户时还有在用或仍保留的证书 | 返回 `409`，保留账户和默认状态 |
@@ -64,7 +71,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 正常：配置扫描→部署→读取真实端口→绑定→证书；网站编辑同步已有域名配置；系统独立 worker 升级并保存结果。
 基础：无发布源显示未配置，无域名可用 IP:端口管理，无证书不阻止 HTTP 网站使用。
-建站：留空目录分配新目录，填写域名建立 HTTP 入口。勾选证书后再启动后台申请，证书失败时保留 HTTP，删除网站时保留内容目录。
+建站时按主机名建立 HTTP 入口。勾选证书后逐个申请普通域名的证书，个别签发失败后其他普通域名仍继续申请。编辑仅修改备注或标识时无需重载 Nginx。
 安装：完整参数支持关闭标准输入。提供账号和端口时，脚本仍会按需询问密码与域名。选择申请证书但域名为空时在安装前报错。
 账户：无证书账户可删除。删除默认账户后选最早添加的剩余账户，删空后等待下一次添加。手动改选账户签发成功后，当前证书切换到新账户；失败时继续使用原证书。
 失败：无效 Nginx 配置回退旧文件；网站保存/删除失败恢复旧记录；删除项目不使用 --volumes，删除网站不删除内容目录。
@@ -76,7 +83,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 `bash tests/uninstall-smoke.sh` 在仓库 `.tmp` 中用实际文件和 SQLite 验证取消、默认保留、选中项目清理、失败恢复和重复执行。Docker、Nginx、systemd 使用命令替身。
 
-`internal/panel/sites_test.go` 覆盖默认目录、建站即绑 HTTP、首次绑定回滚及证书任务启动或签发失败时的保留行为。
+`internal/panel/sites_test.go` 覆盖旧库重名迁移、标识和默认目录、批量 HTTP 绑定及整批回滚、备注编辑、证书任务启动失败和签发部分失败时的保留行为。Nginx 验收使用具体子域名验证通配符站点访问。
 
 `tests/install-smoke.sh` 核对混合输入、证书交互默认值、无人值守安装、必填项缺失、显式空值及密码经标准输入交给初始化的行为。健康检查用例核对自定义端口、首次失败后静默重试、HTTPS 域名解析和证书失败后的 HTTP 入口。
 
@@ -91,7 +98,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 补发已有标签使用 `gh workflow run release.yml --ref main -f tag=vX.Y.Z`。工作流定义从 `main` 读取，发行包仍使用原标签提交构建。
 
-建站默认目录应位于 `Root/sites/`。将内容放在权限为 `0700` 的 `data/` 会阻止 Nginx 读取。证书申请在 HTTP 绑定确认生效后开始，页面通过任务最终结果确认 HTTPS。
+建站默认目录应位于 `Root/sites/`。将内容放在权限为 `0700` 的 `data/` 会阻止 Nginx 读取。一次建站的整组绑定写入后统一应用 Nginx 配置。HTTP 入口确认生效后才能启动后台证书任务，HTTPS 状态来自各域名记录。
 
 安装脚本以参数是否提供决定是否交互。`--domain ''` 明确选择服务器地址，不能把空字符串当作缺项再次询问。
 

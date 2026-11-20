@@ -2,7 +2,7 @@
 import { computed, reactive, ref, useId, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import type { Operation } from '../api'
-import { domains, panelLoginURL, type Binding } from '../domain-api'
+import { domains, isWildcardHostname, panelLoginURL, type Binding } from '../domain-api'
 import { projects, type Project, type ProjectPort } from '../projects-api'
 import { sites, type Site } from '../sites-api'
 import { errorText } from '../format'
@@ -15,6 +15,7 @@ const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ done: [result: BindResult] }>()
 const form = reactive({ target: '', domain: '', port: '', scheme: 'http', auto_certificate: false, accountId: '' })
 const formId = useId()
+const domainHintId = useId()
 const formRef = ref<FormInstance>()
 const projectList = ref<Project[]>([])
 const siteList = ref<Site[]>([])
@@ -26,7 +27,8 @@ const kind = computed(() => props.binding?.kind ?? form.target.split(':')[0])
 const targetId = computed(() => form.target.split(':')[1] ?? '')
 const options = computed(() => ports.value.filter(p => p.source === 'ports' && p.protocol === 'tcp'))
 const choosing = computed(() => !props.binding && !props.preset)
-const requestsCertificate = computed(() => form.auto_certificate && (
+const wildcardSite = computed(() => kind.value === 'site' && isWildcardHostname(form.domain.trim()))
+const requestsCertificate = computed(() => !wildcardSite.value && form.auto_certificate && (
   props.binding?.certificate_status !== 'enabled' ||
   props.binding.domain !== form.domain.trim().toLowerCase().replace(/\.$/, '')
 ))
@@ -63,7 +65,7 @@ async function submit() {
   if (saving.value || (requestsCertificate.value && !form.accountId) || !await formRef.value?.validate().catch(() => false)) return
   saving.value = true; error.value = ''
   const domain = form.domain.trim()
-  const certOptions = { auto_certificate: form.auto_certificate, acme_account_id: requestsCertificate.value ? form.accountId : undefined }
+  const certOptions = { auto_certificate: !wildcardSite.value && form.auto_certificate, acme_account_id: requestsCertificate.value ? form.accountId : undefined }
   try {
     let operation: Operation | null = null
     let accessURL = ''
@@ -89,11 +91,14 @@ async function submit() {
 <template>
   <el-dialog v-model="open" :title="binding ? `编辑 ${binding.domain}` : preset ? `为 ${preset.name} 绑定域名` : '绑定域名'" width="min(520px, calc(100vw - 32px))" :close-on-click-modal="false" append-to-body>
     <el-form :id="formId" ref="formRef" :model="form" :rules="rules" label-position="top" class="dialog-form" @submit.prevent="submit">
-      <el-form-item label="域名" prop="domain"><el-input v-model="form.domain" placeholder="例如 blog.example.com" autocomplete="off"/><span class="hint">请先把该域名的 A 记录解析到本服务器。</span></el-form-item>
+      <el-form-item label="域名" prop="domain">
+        <el-input v-model="form.domain" placeholder="例如 blog.example.com" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" :aria-describedby="domainHintId"/>
+        <span :id="domainHintId" class="hint">请先将域名解析到本服务器。<template v-if="wildcardSite">通配符主机名仅支持 HTTP。</template></span>
+      </el-form-item>
       <el-form-item v-if="choosing" label="指向" prop="target">
         <el-select v-model="form.target" placeholder="选择项目、网站或面板">
           <el-option-group v-if="projectList.length" label="容器项目"><el-option v-for="p in projectList" :key="p.id" :value="`project:${p.id}`" :label="p.name"/></el-option-group>
-          <el-option-group v-if="siteList.length" label="静态网站"><el-option v-for="s in siteList" :key="s.id" :value="`site:${s.id}`" :label="s.name"/></el-option-group>
+          <el-option-group v-if="siteList.length" label="静态网站"><el-option v-for="s in siteList" :key="s.id" :value="`site:${s.id}`" :label="s.identifier"/></el-option-group>
           <el-option-group label="其他"><el-option value="panel" label="本面板"/></el-option-group>
         </el-select>
       </el-form-item>
@@ -107,7 +112,7 @@ async function submit() {
         <el-alert v-if="!scanning && !options.length && !error" title="没有可绑定的已发布 TCP 端口，请在 Compose 中添加 ports 映射。" type="info" :closable="false"/>
         <el-form-item label="上游协议"><el-radio-group v-model="form.scheme"><el-radio-button value="http">HTTP</el-radio-button><el-radio-button value="https">HTTPS</el-radio-button></el-radio-group></el-form-item>
       </template>
-      <el-checkbox v-model="form.auto_certificate" name="auto_certificate">自动申请 HTTPS 证书</el-checkbox>
+      <el-checkbox v-if="!wildcardSite" v-model="form.auto_certificate" name="auto_certificate">自动申请 HTTPS 证书</el-checkbox>
       <AcmeAccountSelect v-if="open && requestsCertificate" v-model="form.accountId"/>
       <p v-if="requestsCertificate" class="hint">申请证书需要公网 80 端口可达。</p>
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon/>

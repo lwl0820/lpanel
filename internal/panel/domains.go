@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -39,6 +40,26 @@ type Binding struct {
 	CertificateAccountID string `json:"certificate_account_id,omitempty"`
 	CertificateError     string `json:"certificate_error"`
 	ExpiresAt            string `json:"expires_at"`
+}
+
+var (
+	ordinaryDomain         = regexp.MustCompile(`^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$`)
+	errWildcardCertificate = errors.New("通配符域名仅支持 HTTP 访问")
+)
+
+func normalizeBindingDomain(domain, kind string) (string, error) {
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	name := domain
+	if kind == "site" {
+		name = strings.TrimPrefix(domain, "*.")
+	}
+	if len(domain) > 253 || !ordinaryDomain.MatchString(name) {
+		if kind == "site" {
+			return "", errors.New("请输入有效的域名，通配符只能用于开头，例如 *.example.com")
+		}
+		return "", errors.New("请输入有效的普通域名")
+	}
+	return domain, nil
 }
 
 func (a *App) registerDomains() error {
@@ -92,8 +113,13 @@ func (a *App) registerDomains() error {
 	})))
 	a.Mux.Handle("POST /api/v1/bindings/{id}/certificate", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		if _, err := a.binding(r.Context(), id); err != nil {
+		b, err := a.binding(r.Context(), id)
+		if err != nil {
 			WriteError(w, 404, "not_found", "域名绑定不存在")
+			return
+		}
+		if strings.HasPrefix(b.Domain, "*.") {
+			WriteError(w, 400, "binding_error", errWildcardCertificate.Error())
 			return
 		}
 		var input struct {
@@ -166,12 +192,28 @@ func (a *App) binding(ctx context.Context, id string) (Binding, error) {
 	return b, err
 }
 func (a *App) storeBinding(ctx context.Context, b Binding) error {
+	return writeBinding(ctx, a.DB, b)
+}
+func writeBinding(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, b Binding) error {
 	data, err := json.Marshal(b)
 	if err != nil {
 		return err
 	}
-	_, err = a.DB.ExecContext(ctx, "INSERT INTO bindings(id,domain,payload) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET domain=excluded.domain,payload=excluded.payload", b.ID, b.Domain, string(data))
+	_, err = db.ExecContext(ctx, "INSERT INTO bindings(id,domain,payload) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET domain=excluded.domain,payload=excluded.payload", b.ID, b.Domain, string(data))
 	return err
+}
+func isUniqueConstraint(err error) bool {
+	sqliteErr, ok := errors.AsType[*sqlite.Error](err)
+	return ok && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+}
+func newBindingID() (string, error) {
+	var raw [12]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw[:]), nil
 }
 func (a *App) SaveBinding(ctx context.Context, b Binding) (Binding, error) {
 	return a.SaveBindingWithAccount(ctx, b, "")
@@ -183,20 +225,20 @@ func (a *App) SaveBindingWithAccount(ctx context.Context, b Binding, accountID s
 	return a.saveBindingLocked(ctx, b, accountID)
 }
 func (a *App) saveBindingLocked(ctx context.Context, b Binding, accountID string) (Binding, error) {
-	b.Domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(b.Domain), "."))
-	if !regexp.MustCompile(`^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$`).MatchString(b.Domain) || len(b.Domain) > 253 {
-		return b, fmt.Errorf("请输入有效的普通域名")
+	domain, err := normalizeBindingDomain(b.Domain, b.Kind)
+	if err != nil {
+		return b, err
+	}
+	b.Domain = domain
+	if b.AutoCertificate && strings.HasPrefix(b.Domain, "*.") {
+		return b, errWildcardCertificate
 	}
 	switch b.Kind {
 	case "panel":
 		b.ResourceID = "panel"
 	case "site":
-		if !filepath.IsAbs(b.Directory) || strings.ContainsAny(b.Directory, "\n\r\"$;") {
-			return b, fmt.Errorf("请输入有效的静态网站绝对目录")
-		}
-		info, err := os.Stat(b.Directory)
-		if err != nil || !info.IsDir() {
-			return b, fmt.Errorf("静态网站目录不存在")
+		if err := validateSiteDirectory(b.Directory); err != nil {
+			return b, err
 		}
 	case "project":
 		u, err := url.Parse(b.Upstream)
@@ -207,11 +249,10 @@ func (a *App) saveBindingLocked(ctx context.Context, b Binding, accountID string
 		return b, fmt.Errorf("网站类型无效")
 	}
 	if b.ID == "" {
-		raw := make([]byte, 12)
-		if _, err := rand.Read(raw); err != nil {
+		b.ID, err = newBindingID()
+		if err != nil {
 			return b, err
 		}
-		b.ID = hex.EncodeToString(raw)
 	}
 	old, oldErr := a.binding(ctx, b.ID)
 	b.CertificateStatus = "disabled"
@@ -240,7 +281,7 @@ func (a *App) saveBindingLocked(ctx context.Context, b Binding, accountID string
 		}
 	}
 	if err := a.storeBinding(ctx, b); err != nil {
-		if sqliteErr, ok := errors.AsType[*sqlite.Error](err); ok && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+		if isUniqueConstraint(err) {
 			return b, errors.New("该域名已被使用")
 		}
 		return b, fmt.Errorf("保存域名失败：%w", err)
@@ -275,6 +316,9 @@ func (a *App) DeleteBinding(ctx context.Context, id string) error {
 	return err
 }
 func (a *App) BindingURL(b Binding) string {
+	if strings.HasPrefix(b.Domain, "*.") {
+		return ""
+	}
 	scheme := "http"
 	if b.CertificateStatus == "enabled" {
 		scheme = "https"
@@ -454,6 +498,9 @@ func (a *App) RequestCertificateWithAccount(ctx context.Context, id, accountID s
 	b, err := a.binding(ctx, id)
 	if err != nil {
 		return err
+	}
+	if strings.HasPrefix(b.Domain, "*.") {
+		return errWildcardCertificate
 	}
 	account, err := a.certificateAccount(ctx, accountID, b.CertificateAccountID)
 	if err != nil {
