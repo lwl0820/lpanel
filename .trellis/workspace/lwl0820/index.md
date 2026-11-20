@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-11-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~465 | Active |
+| `journal-1.md` | ~501 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-11-21 | 面板命令行管理和公网 IP HTTPS | `a41d6cf` | `main` |
 | 15 | 2026-11-21 | 容器项目列表、单容器日志与文件清理 | `e50a051` | `main` |
 | 14 | 2026-11-21 | 优化证书提供商选择与账户注册 | `0035094` | `main` |
 | 13 | 2026-11-21 | 新建 Compose 项目后自动部署 | `2b0d30d` | `main` |

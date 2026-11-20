@@ -463,3 +463,39 @@
 ### Next Steps
 
 - 在运行 Docker 的隔离环境验收多个容器副本的日志与实机命名卷保留。
+
+
+## Session 16: 面板命令行管理和公网 IP HTTPS
+<!-- trellis-session: v=2 fp=d0f58c53ed3bfd9d -->
+
+**Date**: 2026-11-21
+**Task**: 面板命令行管理和公网 IP HTTPS
+**Branch**: `main`
+
+### Summary
+
+实现面板命令行管理和内置公网 IPv4、IPv6 证书申请及续期。
+
+### Main Changes
+
+- 管理员可在终端修改账号凭据和访问设置，切换失败时恢复原入口。
+- IP 证书使用内置 Go ACME 客户端申请和续期。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a41d6cf` | feat: 添加面板管理命令及公网 IP HTTPS |
+
+### Testing
+
+- [OK] Go 定向回归、前端类型检查、指定文件 ESLint、Vitest 和生产构建通过。
+- [OK] 隔离环境的真实 Nginx 验证了 IPv4、IPv6 HTTPS、同端口域名证书和失败回退。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 在真实公网和 systemd 环境验收 Let’s Encrypt 签发和续期。
