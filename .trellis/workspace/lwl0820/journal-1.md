@@ -200,3 +200,37 @@
 ### Next Steps
 
 - 由维护者在目标环境执行公网证书、公网 HTTPS 在线安装、其余系统和 arm64 实机验收。
+
+
+## Session 7: 安装脚本支持命令行配置
+<!-- trellis-session: v=2 fp=19292dd4856b9271 -->
+
+**Date**: 2026-11-20
+**Task**: 安装脚本支持命令行配置
+**Branch**: `main`
+
+### Summary
+
+安装脚本可直接接收账号、密码、端口、域名和证书选项，仅在缺少适用配置时交互。
+
+### Main Changes
+
+- 同步安装帮助、README、安装说明、部署约定和密码传递约定。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dbcc65d5e06ba430c7ca9cf69b96fbde19606522` | feat: 支持安装脚本命令行参数 |
+
+### Testing
+
+- [OK] Bash 语法、帮助和文档链接通过检查。安装冒烟用例在无网络本地命名空间通过，系统服务和证书使用替身。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 公网 HTTPS 安装由维护者在目标服务器人工验收。

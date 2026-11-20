@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
+- **Total Sessions**: 7
 - **Last Active**: 2026-11-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~202 | Active |
+| `journal-1.md` | ~236 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-11-20 | 安装脚本支持命令行配置 | `dbcc65d5e06ba430c7ca9cf69b96fbde19606522` | `main` |
 | 6 | 2026-11-20 | 首版收尾与人工验收规则 | `f72cec5`, `66f8d3f`, `15e1616` | `main` |
 | 5 | 2026-11-20 | 续收尾开发规范、Compose 项目和面板升级 | `d8a4389`, `77f106dda2ed815f6defc6b874144b63098a8fef` | `main` |
 | 4 | 2026-11-20 | 收尾基础能力与发行部署任务 | `7cfe897`, `0876e97`, `211f618`, `9c48626`, `4ac3eec` | `main` |
