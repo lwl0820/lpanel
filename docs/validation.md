@@ -66,3 +66,17 @@ scripts/build-release.sh 已构建 amd64、arm64 两种 Linux 包，包内包含
 | 升级失败回退 | 在同一虚拟机通过独立 systemd 工作单元运行升级工作进程，使用启动即失败的候选程序。健康检查失败后恢复 v0.1.1，操作记录说明回退，主服务与原管理员会话恢复。 |
 
 Compose 的 HTTPS 和 WSS 验收使用证书签发替身。公网签发、续期、安装时域名 HTTPS 初始化与 arm64 实机仍需目标条件。
+
+## 本地 ACME 追加验收（2026-11-20）
+
+复用 Debian 12 amd64 独立测试机的磁盘快照，使用真实 Certbot 2.1.0、Nginx 和 systemd，通过 Pebble 测试 CA 校验 HTTP-01。测试 CA 从 Nginx 的 80 端口实际读取验证文件。 [Pebble](https://github.com/letsencrypt/pebble)
+
+| 路径 | 实际结果 |
+| --- | --- |
+| 签发失败 | 测试 DNS 缺少域名地址时，Certbot 报告验证失败，面板的 HTTP 健康接口仍可访问。 |
+| 修复并重试 | 加入测试域名解析后签发成功。Nginx 对 ACME 验证文件返回 200，客户端验证证书链和域名后可通过 HTTPS 访问面板。 |
+| 续期与生效 | 启动 `lpanel-renew.service` 后，Certbot 更新证书。Nginx 实际提供的证书序列号与新文件一致。 |
+| 续期失败 | 停止测试 CA 后，续期服务失败。现有证书序列号保持原值，HTTPS 仍可访问。 |
+| 自定义面板端口 | 改用 19443 后，从业务端口 80 跳转到带端口的 HTTPS 地址，健康接口返回 v0.1.1。 |
+
+公网域名解析和公网 CA 的签发、续期，安装时启用公网 HTTPS，其余受支持系统与 arm64 实机仍待验收。

@@ -23,6 +23,6 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "implementation_status": "代码质量门通过，提交已获批准，相应外部验收待完成"
+    "implementation_status": "已通过本地 ACME HTTP-01、真实 Certbot/systemd 续期、失败保留 HTTPS 和自定义端口验证，待公网签发与续期。"
   }
 }
