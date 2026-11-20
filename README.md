@@ -60,16 +60,17 @@ unset panel_password
 
 另开终端运行 `npm --prefix web run dev`，通过 Vite 输出的地址访问。开发代理将 API 转发到本机 `127.0.0.1:18080`。开发模式没有安装宿主机 Nginx、Docker 或 Certbot；涉及系统服务的操作需在隔离的完整环境验证。
 
-## 安装与发行
+## 在线一键安装
+
+在 Debian 12/13 或 Ubuntu 22.04/24.04/26.04 LTS 服务器（amd64 或 arm64）的终端运行下方命令。服务器需要使用 systemd，能访问 GitHub，并已安装 `curl` 和 `sudo`。
 
 ```bash
-bash scripts/build-release.sh v0.1.0
-sudo bash deploy/install.sh --archive "$PWD/.tmp/releases/lpanel_v0.1.0_linux_amd64.tar.gz"
+curl -fsSL https://raw.githubusercontent.com/lwl0820/lpanel/main/deploy/install.sh -o lpanel-install.sh && sudo bash lpanel-install.sh --repository lwl0820/lpanel
 ```
 
-构建脚本生成 amd64、arm64 发行包及同名 `.sha256` 校验文件。安装命令应在目标服务器执行，arm64 服务器使用对应包。公开发布后也可以使用 `sudo bash deploy/install.sh --repository owner/repo`，其中仓库必须配置真实的正式 Release 与发行附件。
+脚本会下载并校验适合服务器架构的最新正式发行包。按提示设置管理员账号、密码和面板端口，也可以绑定域名并申请 HTTPS 证书。
 
-详细交互步骤、端口要求和维护命令见[安装说明](docs/install.md)。当前未配置公开发布仓库，不提供虚构的在线安装地址。
+详细步骤、端口要求和维护命令见[安装说明](docs/install.md)。
 
 ## 检查与验证
 
