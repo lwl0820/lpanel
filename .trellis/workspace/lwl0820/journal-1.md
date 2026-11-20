@@ -287,3 +287,29 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 10: 支持多个 ACME 证书账户
+<!-- trellis-session: v=2 fp=e6d4f682579b6223 -->
+
+**Date**: 2026-11-20
+**Task**: 支持多个 ACME 证书账户
+**Branch**: `main`
+
+### Summary
+
+安装与面板支持 Let’s Encrypt 和 ZeroSSL，可按证书选择账户并沿用签发账户续期。默认账户自动接任，仍有已签发证书的账户禁止删除。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b7d953c` | feat: 支持多个 ACME 证书账户 |
+
+### Testing
+
+- [OK] 相关 Go 和前端测试、安装冒烟及 Chrome 与 Nginx 联调通过。联调用 Certbot 替身，公网 CA 签发待实测。
+
+### Status
+
+[OK] **Completed**
