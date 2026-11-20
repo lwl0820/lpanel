@@ -131,3 +131,36 @@
 ### Next Steps
 
 - 继续验收 Compose 重部署后的代理切换、HTTPS/WSS、公网证书签发和续期，以及目标服务器安装、重启、升级与回退。补齐项目开发规范。
+
+
+## Session 5: 续收尾开发规范、Compose 项目和面板升级
+<!-- trellis-session: v=2 fp=528561b203fecad5 -->
+
+**Date**: 2026-11-20
+**Task**: 续收尾开发规范、Compose 项目和面板升级
+**Branch**: `main`
+
+### Summary
+
+补齐前后端开发规范，并在独立 Debian 12 amd64 虚拟机通过真实安装、重启、Compose 重部署、代理 HTTPS/WSS、在线升级和失败回退验收。归档开发规范、Compose 和面板升级任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d8a4389` | docs: 补齐 LPanel 前后端开发规范 |
+| `77f106dda2ed815f6defc6b874144b63098a8fef` | docs: 记录 Debian 安装、Compose 和升级实测 |
+
+### Testing
+
+- [OK] 核对规范索引、源码引用和任务链接。Go Compose 相关测试通过。
+- [OK] 在线安装并重启 v0.1.1。Compose 真实端口由 32811 切换至 32812，测试证书下的 HTTPS、WSS 与删除后保留数据均通过。
+- [OK] 通过真实 systemd 工作单元验证 v0.1.0 到 v0.1.1 在线升级、持久化保留和受控启动失败回退。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 提供可达公网域名，验收签发、续期和安装时启用 HTTPS。继续覆盖其余支持系统及 arm64 实机。
