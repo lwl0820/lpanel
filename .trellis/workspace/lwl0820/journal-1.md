@@ -313,3 +313,29 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 11: 支持面板专用登录入口
+<!-- trellis-session: v=2 fp=a167ff26f9c101cb -->
+
+**Date**: 2026-11-20
+**Task**: 支持面板专用登录入口
+**Branch**: `main`
+
+### Summary
+
+管理员可设置专用登录路径，匿名访问其他面板地址直接返回 404，有效会话可照常访问内页。安装脚本新增可留空的 --login-path。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c53c396` | feat: 支持面板专用登录入口 |
+
+### Testing
+
+- [OK] 相关 Go、前端和安装冒烟通过。隔离 Chrome 与真实 Nginx 验证入口切换、会话状态、重启保留、HTTPS 跳转、ACME challenge 和业务站点。HTTPS 使用测试证书。
+
+### Status
+
+[OK] **Completed**
