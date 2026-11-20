@@ -9,7 +9,7 @@
 - RegisterProjectRoutes、RegisterSiteRoutes、RegisterUpgradeRoutes 在 Open 中创建表并注册接口；域名由 registerDomains 接入。
 - SaveBinding(ctx, Binding)、DeleteBinding(ctx, id)、ApplyNginx(ctx)、RequestCertificate(ctx, id)、RenewCertificates(ctx) 是项目、网站和面板复用的边界。需指定账户时使用 SaveBindingWithAccount 和 RequestCertificateWithAccount。
 - SaveSite(ctx, Site)、DeleteSite(ctx, id) 同步网站记录和关联绑定。
-- `POST /api/v1/projects` 接收 `name`、`compose` 和 `environment`。通过配置校验并保存后复用 `project_deploy` 后台操作。响应为 `200`，项目字段仍在顶层，并附带 `operation`。`PUT /api/v1/projects/{id}` 保存配置并返回项目字段。
+- `POST /api/v1/projects` 和 `PUT /api/v1/projects/{id}` 接收 `name`、`compose` 和 `environment`。两者通过配置校验并保存后均提交 `project_deploy` 后台操作。响应为 `200`，项目字段在顶层，并附带 `operation`。
 - `POST /api/v1/sites` 接收 `hostnames` 字符串数组、`identifier`、`note`、`directory`、`spa` 和可选的 `auto_certificate`、`acme_account_id`。成功返回 `201`、顶层网站字段、`bindings` 数组及可选的 `operation` 或 `certificate_error`。`PUT /api/v1/sites/{id}` 保存 `identifier`、`note`、`directory` 和 `spa`。单独绑定域名与手动申请入口继续接受可选 `acme_account_id`。
 - `GET /api/v1/acme/accounts` 返回 `accounts`、`providers` 和 `default_account_id`。在该路径通过 POST 新增账户，通过 PUT 或 DELETE 操作 `/{id}` 下的账户。输入使用 `name`、`provider`、`email`、`agree_tos` 和可选的 `eab_kid`、`eab_hmac_key`。账户响应包含 `provider_name` 与 `needs_eab`。
 - UpgradeWorker(ctx, root, version, operationID, releaseDir) 在独立 systemd service 中执行版本切换。
@@ -52,8 +52,8 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 | 场景 | 规定结果 |
 | --- | --- |
 | Compose 校验失败或 Docker 不可用 | 显示实际错误，不把保存配置当成部署成功 |
-| 项目已保存，部署任务无法启动 | 返回 `200`、项目字段和 `deployment_error`，可在项目列表重试 |
-| 新建项目的后台部署执行失败 | 操作状态为 `failed`，保留项目记录与配置 |
+| 项目已保存，部署任务无法启动 | 返回 `200`、项目字段和 `deployment_error`，可打开「编辑配置」并重新保存以重试 |
+| 后台部署执行失败 | 操作状态为 `failed`，保留项目记录与配置 |
 | 网站目录无效 | 拒绝保存，不递归修改用户目录权限 |
 | 网站标识已存在 | 提示更换网站标识 |
 | 默认目录已存在 | 提示修改标识或指定已有的网页目录，保留目录中的数据 |
@@ -78,7 +78,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 ## 5. 正常、基础与失败案例
 
 正常：配置扫描→部署→读取真实端口→绑定→证书；网站编辑同步已有域名配置；系统独立 worker 升级并保存结果。
-新建项目保存后直接提交首次部署，操作状态为 `success` 后才提示部署完成。编辑配置后，管理员通过项目列表的部署入口使配置生效。
+新建项目与保存配置均自动提交部署。操作状态为 `success` 后才提示部署完成。
 基础：无发布源显示未配置，无域名可用 IP:端口管理，无证书不阻止 HTTP 网站使用。
 建站时按主机名建立 HTTP 入口。勾选证书后逐个申请普通域名的证书，个别签发失败后其他普通域名仍继续申请。编辑仅修改备注或标识时无需重载 Nginx。
 安装：完整参数支持关闭标准输入。提供账号和端口时，脚本仍会按需询问密码与域名。选择申请证书但域名为空时在安装前报错。
@@ -89,7 +89,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 ## 6. 必需测试
 
 项目测试覆盖短/长端口、变量、expose、JSONL、实际端口更新和保留卷；LPANEL_DOCKER_INTEGRATION=1 开启真实 Docker 测试。域名测试覆盖配置标识匹配、重载 0 但配置未生效、探针超时、原 HTTP/HTTPS 保留、Host/SNI 和 CLI Open 不打断服务任务；网站测试覆盖目录/绑定同步、失败恢复和内容保留。升级测试覆盖语义版本、附件、校验下载、成功/失败回退及鉴权。tests/install-smoke.sh 在一次性 Debian 容器中验证安装分支，系统服务和包管理使用替身，不能等同真实服务器验收。
-新建项目验证创建接口返回可查询的部署操作，并执行已有部署命令。保存已有配置只更新项目及文件，操作记录数量保持不变。
+项目测试验证新建和更新均返回可查询的部署操作，部署使用刚保存的配置，校验失败不启动部署。
 
 `bash tests/uninstall-smoke.sh` 在仓库 `.tmp` 中用实际文件和 SQLite 验证取消、默认保留、选中项目清理、失败恢复和重复执行。Docker、Nginx、systemd 使用命令替身。
 
@@ -104,7 +104,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 错误：让证书续期 CLI 调用 Open 时把全部 running 操作置为 failed；把 ps JSON Lines 直接当整体数组解析；仅因版本号较新就认为有可用发行包。
 正确：仅 Serve 启动时恢复普通中断操作；按真实 CLI 输出解析；版本、附件和检查结果共同决定是否可升级。CLI 绑定面板 HTTPS 后重启主服务，确保 Secure Cookie 与磁盘配置一致。
 
-首次部署由创建接口在配置文件和项目记录保存后发起。页面收到操作记录后开始轮询，项目原有的手动部署接口用于后续操作。
+创建和更新接口在配置文件与项目记录保存后发起部署。页面收到操作记录后开始轮询，可通过重新保存已校验的配置重试部署。
 
 卸载清理以登记项目为单位，仅在 `down --remove-orphans` 成功后清理目录和记录。全局 Docker 清理或按项目名前缀批量删除会影响其他业务资源。
 

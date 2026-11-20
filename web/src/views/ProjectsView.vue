@@ -27,7 +27,7 @@ const router = useRouter()
 onMounted(() => { void load(); if (route.query.new) { void edit(); void router.replace('/projects') } })
 async function reload() { loading.value = true; await load() }
 const domainsOf = (id: string) => bindings.value.filter(b => b.kind === 'project' && b.resource_id === id)
-const verbs: Record<string, [string, string]> = { deploy: ['部署', '部署完成'], start: ['启动', '已启动'], stop: ['停止', '已停止'], restart: ['重启', '已重启'], delete: ['删除', '已删除'] }
+const verbs: Record<string, [string, string]> = { start: ['启动', '已启动'], stop: ['停止', '已停止'], restart: ['重启', '已重启'], delete: ['删除', '已删除'] }
 async function action(item: Project, name: string) {
   if (name === 'delete') { try { await ElMessageBox.confirm('删除项目将移除容器和域名绑定，数据卷及挂载目录会保留。', `删除 ${item.name}`, { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }) } catch { return } }
   busy.value = true
@@ -38,7 +38,6 @@ const menu = (item: Project): MenuItem[] => [
   { label: '停止', icon: 'stop', onSelect: () => action(item, 'stop') },
   { label: '重启', icon: 'restart', onSelect: () => action(item, 'restart') },
   { label: '状态与日志', icon: 'log', divided: true, onSelect: () => inspect(item) },
-  { label: '编辑配置', icon: 'edit', onSelect: () => edit(item) },
   { label: '绑定域名', icon: 'link', onSelect: () => bind(item) },
   { label: '删除项目', icon: 'trash', danger: true, divided: true, onSelect: () => action(item, 'delete') },
 ]
@@ -71,18 +70,14 @@ async function save() {
   if (!(await formRef.value?.validate().catch(() => false)) || saving.value) return
   saving.value = true; editorError.value = ''
   try {
-    if (selected.value) {
-      await projects.update(selected.value.id, form)
-      editor.value = false
-      ElMessage.success('配置已保存，重新部署后生效')
-    } else {
-      const result = await projects.create(form)
-      editor.value = false
-      if (result.operation) {
-        void track(result.operation, `部署 ${result.name}`, `${result.name} 部署完成`)
-      } else if (result.deployment_error) {
-        ElMessage.warning(result.deployment_error)
-      }
+    const result = selected.value
+      ? await projects.update(selected.value.id, form)
+      : await projects.create(form)
+    editor.value = false
+    if (result.operation) {
+      void track(result.operation, `部署 ${result.name}`, `${result.name} 部署完成`)
+    } else if (result.deployment_error) {
+      ElMessage.warning(result.deployment_error)
     }
     await load()
   } catch (e) {
@@ -130,7 +125,7 @@ const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.nam
             <tr v-for="item in items" :key="item.id">
               <td class="first"><span class="name">{{ item.name }}</span><span v-for="b in domainsOf(item.id)" :key="b.id" class="sub">{{ b.domain }}</span><span v-if="!domainsOf(item.id).length" class="sub">未绑定域名</span></td>
               <td data-label="配置更新" class="muted num">{{ formatTime(item.updated_at) }}</td>
-              <td class="actions"><span class="row-act"><el-button size="small" :disabled="busy" @click="action(item, 'deploy')"><AppIcon name="rocket"/>部署</el-button><RowMenu :items="menu(item)" :label="item.name" :disabled="busy"/></span></td>
+              <td class="actions"><span class="row-act"><el-button size="small" :disabled="busy" @click="edit(item)"><AppIcon name="edit"/>编辑配置</el-button><RowMenu :items="menu(item)" :label="item.name" :disabled="busy"/></span></td>
             </tr>
           </tbody>
         </table>
@@ -138,7 +133,7 @@ const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.nam
     </ListState>
   </div>
   <el-drawer v-model="editor" :title="editorTitle" size="min(720px, 100vw)" :close-on-click-modal="false" append-to-body class="app-drawer">
-    <template #header><div><h2>{{ editorTitle }}</h2><p v-if="selected">配置更新于 {{ formatTime(selected.updated_at) }}</p></div></template>
+    <template #header><div><h2>{{ editorTitle }}</h2><p v-if="selected">保存后将重新部署项目。</p></div></template>
     <div v-loading="editorLoading" class="drawer-body">
       <el-alert v-if="editorError" :title="editorError" type="error" :closable="false" show-icon/>
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="save">

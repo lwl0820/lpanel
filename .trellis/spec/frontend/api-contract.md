@@ -10,7 +10,7 @@
 
 `sites.create` 提交网站字段、`hostnames` 数组和可选的证书选项，返回网站、`bindings` 数组与可选的证书操作。`sites.update` 提交 `identifier`、`note`、`directory` 和 `spa`。
 
-`projects.create` 返回顶层项目字段及首次部署的 `operation`。项目保存成功但未能启动部署时返回 `deployment_error`。`projects.update` 保存配置并返回项目字段。
+`projects.create` 和 `projects.update` 都返回顶层项目字段及部署的 `operation`。项目保存成功但未能启动部署时返回 `deployment_error`。
 
 证书账户由 `GET /api/v1/acme/accounts` 提供，返回账户列表、提供商信息和默认账户 ID。绑定域名、新建静态站和手动签发均用 `acme_account_id` 提交本次选择。绑定返回的 `certificate_account_id` 用于展示实际签发账户。
 
@@ -28,7 +28,7 @@
 
 建站时主机名为空，提交时定位到主机名输入。绑定校验或生效失败，在弹窗保留填写项。返回 `201` 且带 `certificate_error` 时，显示已创建的 HTTP 网站和重试说明。后台操作有失败时通过 `OperationBanner` 显示原因，并提供域名与证书入口。
 
-点击「创建」后，配置校验失败时保留表单。保存成功后关闭抽屉并刷新项目列表，通过 `OperationBanner` 显示部署进度和执行失败原因。收到 `deployment_error` 时提示从项目列表重试。
+点击「创建」或「保存配置」后，配置校验失败时保留表单。保存成功后关闭抽屉并刷新项目列表，通过 `OperationBanner` 显示部署进度和执行失败原因。收到 `deployment_error` 时提示打开「编辑配置」重新保存。
 
 账户删除返回 `409` 时显示接口原因，并保留列表中的默认标记。申请失败时继续显示原证书和原账户，切换成功并刷新后显示新账户。
 

@@ -8,7 +8,6 @@ export const icons = {
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   refresh: '<path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4"/>',
-  rocket: '<path d="M12 15 9 12c1.5-4 4.5-7.5 10-8-.5 5.5-4 8.5-8 10Z"/><path d="M9 12H5l2.5-3.5H11M12 15v4l3.5-2.5V13M6 18c-1 1-1.5 2.5-1.5 2.5S6 20 7 19"/>',
   play: '<path d="M7 5v14l11-7L7 5Z"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
   restart: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/>',
