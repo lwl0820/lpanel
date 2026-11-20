@@ -339,3 +339,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 12: 完善静态网站创建与备注编辑
+<!-- trellis-session: v=2 fp=df4b8fe3fd59acc6 -->
+
+**Date**: 2026-11-20
+**Task**: 完善静态网站创建与备注编辑
+**Branch**: `main`
+
+### Summary
+
+新建站点支持多主机名、唯一网站标识和路径安全的默认目录，支持创建与编辑备注。通配符提供 HTTP，普通域名逐个申请 HTTPS。后端与前端定向检查、Chrome 和真实 Nginx 联调通过，证书使用本地测试证书。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4e5b4dc` | feat: 完善静态网站创建与备注编辑 |
+
+### Status
+
+[OK] **Completed**
