@@ -39,9 +39,9 @@ sudo bash deploy/install.sh --archive /服务器路径/lpanel_v0.1.0_linux_amd64
 | `--password <密码>` | 设置单行管理员密码，长度为 8 至 72 字节。密码以 `--` 开头时使用 `--password=<密码>`。省略时隐藏输入并要求确认。 |
 | `--port <端口>` | 设置面板端口。交互默认值为 `8443`。 |
 | `--domain <域名>` | 绑定面板域名。`--domain ''` 使用服务器地址并跳过证书选项。 |
-| `--auto-cert y\|n` | 有域名时设置是否申请 HTTPS 证书。交互默认值为 `n`。 |
-| `--agree-tos` | 申请证书时同意服务条款。 [Let’s Encrypt 服务条款](https://letsencrypt.org/repository/) |
-| `--email <邮箱>` | 申请证书时的联系邮箱。`--email ''` 表示留空。 |
+| `--auto-cert y\|n` | 有域名时设置是否申请 HTTPS 证书。交互默认值为 `y`。 |
+| `--agree-tos` | 申请证书时同意服务条款。交互默认值为 `y`。 [Let’s Encrypt 服务条款](https://letsencrypt.org/repository/) |
+| `--email <邮箱>` | 申请证书时的联系邮箱。交互默认值为 `acme@面板域名`，例如 `acme@panel.example.com`。`--email ''` 表示留空。 |
 
 部署环境已将管理员密码设置为 Shell 变量 `LPANEL_PASSWORD` 时，可通过以下命令直接安装 HTTP 面板。
 

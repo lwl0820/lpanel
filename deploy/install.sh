@@ -36,9 +36,9 @@ while (($#)); do
   --password <密码>         管理员密码。以 -- 开头时使用 --password=<密码>
   --port <端口>             面板端口
   --domain <域名>           面板域名。传入空串使用服务器地址
-  --auto-cert <y或n>        有域名时是否自动申请 HTTPS 证书
-  --agree-tos               同意证书服务条款
-  --email <邮箱>            证书联系邮箱。可传入空串
+  --auto-cert <y或n>        有域名时是否自动申请 HTTPS 证书。交互默认 y
+  --agree-tos               同意证书服务条款。交互默认 y
+  --email <邮箱>            证书联系邮箱，交互默认 acme@面板域名。可传入空串
   --help                    显示帮助
 
 省略的配置会按安装方式提示输入。直接传入的密码可能出现在进程列表和终端历史中。
@@ -92,9 +92,10 @@ done
 [[ "$panel_port" != 18080 ]] || fail '面板端口不能与内部端口 18080 相同'
 [[ -v domain ]] || ask domain '面板域名（留空则使用服务器地址）' ''
 if [[ -n "$domain" ]]; then
-  [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ && "$domain" == *.* ]] || fail '请输入不带协议和端口的普通域名'
+  [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ && "$domain" == *.* && "${domain##*.}" == [a-zA-Z]* ]] ||
+    fail '请输入不带协议和端口的普通域名'
   domain="${domain,,}"
-  [[ -v auto_cert ]] || ask auto_cert '自动申请 HTTPS 证书？y/n' n
+  [[ -v auto_cert ]] || ask auto_cert '自动申请 HTTPS 证书？y/n' y
 fi
 auto_cert="${auto_cert-n}"
 auto_cert="${auto_cert,,}"
@@ -103,9 +104,9 @@ if [[ "$auto_cert" == y ]]; then
   [[ -n "$domain" ]] || fail '自动申请 HTTPS 证书需要指定面板域名'
   echo '域名需已解析到本机，并开放公网 80 端口和面板端口。'
   echo '证书服务条款：https://letsencrypt.org/repository/'
-  [[ -v agree_tos ]] || ask agree_tos '是否同意证书服务条款？y/n' n
+  [[ -v agree_tos ]] || ask agree_tos '是否同意证书服务条款？y/n' y
   [[ "${agree_tos,,}" == y ]] || fail '申请证书需要同意服务条款'
-  [[ -v email ]] || ask email '证书联系邮箱（可留空）' ''
+  [[ -v email ]] || ask email '证书联系邮箱' "acme@$domain"
 fi
 if [[ ! -v repository && -n "${LPANEL_REPOSITORY:-}" ]]; then
   repository="$LPANEL_REPOSITORY"

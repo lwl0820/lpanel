@@ -29,7 +29,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 推送正式标签会触发 `.github/workflows/release.yml`。从 `main` 手动触发时输入已有的 `tag`。两种路径均检出标签源码、执行 `scripts/build-release.sh`、校验 amd64 和 arm64 发行包，再以四个附件发布正式 Release。安装和升级通过 GitHub Release 条目读取发行包。
 
-在线安装按命令行仓库、`LPANEL_REPOSITORY`、交互输入的顺序取值。安装仅询问当前方式适用的缺项。域名存在时才询问是否申请证书，申请时才询问条款和邮箱。显式空域名表示使用服务器地址，显式空邮箱表示留空。密码始终通过标准输入交给面板初始化。 [密码传递约定](./logging-guidelines.md)
+在线安装按命令行仓库、`LPANEL_REPOSITORY`、交互输入的顺序取值。安装仅询问当前方式适用的缺项。填写域名后，自动申请证书的交互默认值为 `y`。申请证书时，条款默认同意，联系邮箱默认为 `acme@<转为小写的面板域名>`。按回车接受默认值。显式空域名表示使用服务器地址，显式空邮箱表示留空。密码始终通过标准输入交给面板初始化。 [密码传递约定](./logging-guidelines.md)
 
 卸载处理 `/opt/lpanel/current`、`/opt/lpanel/releases`、三个 LPanel systemd 单元和带 LPanel 管理标记的 `/etc/nginx/conf.d/lpanel.conf`。移除该配置停用面板及其管理的业务域名入口。默认保留项目容器、目录和记录。选中 Compose 清理时，以 SQLite `projects.id` 为准，使用 `lpanel-<ID>`、项目目录内的 `compose.yaml` 和 `.env` 执行 `down --remove-orphans`。Docker 清理成功后移除该项目目录（含相对挂载目录）、项目记录及 `bindings.payload` 中同一项目的绑定。保留其他数据库记录、证书、Docker 卷、镜像和目录外的数据。
 
@@ -68,7 +68,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 `internal/panel/sites_test.go` 覆盖默认目录、建站即绑 HTTP、首次绑定回滚及证书任务启动或签发失败时的保留行为。
 
-`tests/install-smoke.sh` 核对混合输入、无人值守安装、必填项缺失、显式空值及密码经标准输入交给初始化的行为。
+`tests/install-smoke.sh` 核对混合输入、证书交互默认值、无人值守安装、必填项缺失、显式空值及密码经标准输入交给初始化的行为。
 
 ## 7. 错误与正确用法
 

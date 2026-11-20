@@ -79,14 +79,15 @@ rm /etc/nginx/nginx.conf
 if printf 'admin\ntest-password\ntest-password\n8443\n' | PORT_CONFLICT=1 bash /source/deploy/install.sh --archive "$archive" > /work/.tmp/port-result 2>&1; then exit 13; fi
 grep -q '已被占用' /work/.tmp/port-result
 [[ ! -e /opt/lpanel/data/config.json ]]
-# 混合输入只读取缺项，签发失败时保留 HTTP。
-printf 'mixed-admin\npanel.example.com\ny\n\n' | FAIL_CERT=1 bash /source/deploy/install.sh \
-  --archive "$archive" --password test-password --port 8443 --auto-cert y > /work/.tmp/cert-result 2>&1
+# 混合输入接受三个证书交互默认值，签发失败时保留 HTTP。
+printf 'mixed-admin\nPANEL.example.com\n\n\n\n' | FAIL_CERT=1 bash /source/deploy/install.sh \
+  --archive "$archive" --password test-password --port 8443 > /work/.tmp/cert-result 2>&1
 grep -q '证书未启用' /work/.tmp/cert-result
 grep -q '访问地址：http://192.0.2.10:8443' /work/.tmp/cert-result
 if grep -q '访问地址：https://' /work/.tmp/cert-result; then exit 18; fi
 [[ -f /opt/lpanel/data/config.json ]]
 grep -q -- '--username mixed-admin --port 8443' /opt/lpanel/.tmp/cli-arguments
+grep -Fxq -- 'bind-panel --root /opt/lpanel --domain panel.example.com --auto-cert --agree-tos --email acme@panel.example.com' /opt/lpanel/.tmp/cli-arguments
 rm -rf /opt/lpanel
 # 关闭标准输入，显式空域名允许 HTTP 安装，密码中的空格和符号保留。
 cli_password=' leading $pass\!?# '
