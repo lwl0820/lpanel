@@ -3,7 +3,7 @@
   "name": "static-websites",
   "title": "静态网站管理",
   "description": "支持添加静态网站、绑定域名并自动申请 HTTPS 证书",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "lwl0820",
   "assignee": "lwl0820",
   "createdAt": "2026-10-29",
-  "completedAt": null,
+  "completedAt": "2026-11-20",
   "branch": "codex/server-management-panel",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "7cfe8977376d3da1b422dcf73f186bb4bbae9a85",
   "pr_url": null,
   "subtasks": [],
   "children": [
@@ -25,6 +25,6 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "implementation_status": "代码质量门通过，提交已获批准，相应外部验收待完成"
+    "implementation_status": "静态网站功能已验收。实际 Nginx 验证了域名访问、首页、SPA 回退和 ACME 验证路径。隔离环境验证了使用测试证书的 HTTPS、签发失败保留 HTTP、修复后重试和删除保留内容目录。公网签发及续期由域名与证书任务继续验收。"
   }
 }

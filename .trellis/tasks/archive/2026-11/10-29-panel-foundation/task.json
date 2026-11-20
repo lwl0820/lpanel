@@ -3,7 +3,7 @@
   "name": "panel-foundation",
   "title": "面板基础框架与管理员登录",
   "description": "建立 Go 后端、Vue 3 与 Element Plus 前端及管理员登录能力",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "lwl0820",
   "assignee": "lwl0820",
   "createdAt": "2026-10-29",
-  "completedAt": null,
+  "completedAt": "2026-11-20",
   "branch": "codex/server-management-panel",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "7cfe8977376d3da1b422dcf73f186bb4bbae9a85",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -23,6 +23,6 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "implementation_status": "代码质量门通过，提交已获批准，相应外部验收待完成"
+    "implementation_status": "基础框架与管理员登录已验收。Go 登录、退出、权限与配置持久化测试通过，实际 Nginx 同源入口验证了前端、管理员 Cookie 会话和健康版本接口。"
   }
 }

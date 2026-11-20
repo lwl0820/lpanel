@@ -1,0 +1,29 @@
+{
+  "id": "tag-release-action",
+  "name": "tag-release-action",
+  "title": "标签触发 GitHub Release 自动发布",
+  "description": "推送正式版本标签后构建并发布双架构发行包，支持补跑已存在的标签并补发 v0.1.1。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lwl0820",
+  "assignee": "lwl0820",
+  "createdAt": "2026-11-20",
+  "completedAt": "2026-11-20",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "4ac3eec7a432c97b4913fec4df757d71e4096a33",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-29-panel-upgrade",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "implementation_status": "自动发布工作流已推送，v0.1.1 已由 GitHub Actions 补发，双架构附件已匿名下载并校验。",
+    "run_url": "https://github.com/lwl0820/lpanel/actions/runs/44653096304"
+  }
+}

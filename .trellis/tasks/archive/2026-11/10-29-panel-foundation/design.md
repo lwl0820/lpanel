@@ -1,6 +1,6 @@
 # 面板基础框架与管理员登录技术设计
 
-以[总任务设计](../10-29-server-management-panel/design.md)为跨模块契约，本文件明确子任务负责范围。
+以[总任务设计](../../../10-29-server-management-panel/design.md)为跨模块契约，本文件明确子任务负责范围。
 
 ## 架构与职责
 遵循父任务 design.md：使用 net/http、database/sql 与 modernc SQLite，不增加 ORM 或服务框架。建立 cmd/lpanel 启动和初始化入口、配置与数据库、账号及会话；前端建立 web 工程、路由、API 客户端和类型。

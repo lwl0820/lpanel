@@ -1,0 +1,28 @@
+{
+  "id": "readme-online-install",
+  "name": "readme-online-install",
+  "title": "README 在线一键安装命令",
+  "description": "在 README 提供使用真实发行源、可直接复制执行的在线一键安装命令，并核对公开安装入口。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lwl0820",
+  "assignee": "lwl0820",
+  "createdAt": "2026-11-20",
+  "completedAt": "2026-11-20",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "211f61803d5f6e7334a54165a4a65ea5488c4559",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-29-one-click-install",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "implementation_status": "README 已补充在线命令。v0.1.0 已正式发布，双架构附件已匿名下载并通过 SHA-256 校验。"
+  }
+}

@@ -18,7 +18,10 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "11-20-readme-online-install",
+    "11-20-panel-uninstall"
+  ],
   "parent": "10-29-server-management-panel",
   "relatedFiles": [],
   "notes": "",

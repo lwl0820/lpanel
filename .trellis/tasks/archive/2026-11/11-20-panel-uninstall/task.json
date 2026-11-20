@@ -1,0 +1,28 @@
+{
+  "id": "panel-uninstall",
+  "name": "panel-uninstall",
+  "title": "LPanel 一键卸载",
+  "description": "提供独立的面板卸载命令和中文说明，明确域名访问、业务数据及系统依赖的处理范围。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lwl0820",
+  "assignee": "lwl0820",
+  "createdAt": "2026-11-20",
+  "completedAt": "2026-11-20",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "9c48626e2c6b1f0acfe38c8b2f475d74bb9bf652",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-29-one-click-install",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "implementation_status": "已通过卸载专项测试与独立复核，提交 9c48626 已推送到 main，线上脚本已核对。"
+  }
+}
