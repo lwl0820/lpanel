@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/hosting-contract.md", "reason": "网站目录、域名绑定、Nginx 及证书流程"}
+{"file": ".trellis/spec/backend/runtime-contract.md", "reason": "运行根目录权限、JSON API 和后台操作"}
+{"file": ".trellis/spec/frontend/api-contract.md", "reason": "核对请求、错误和长操作的前端契约"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "复用已有表单和长操作交互"}

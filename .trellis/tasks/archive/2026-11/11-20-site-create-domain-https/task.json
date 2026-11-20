@@ -1,0 +1,28 @@
+{
+  "id": "site-create-domain-https",
+  "name": "site-create-domain-https",
+  "title": "静态网站默认目录与创建时启用 HTTPS",
+  "description": "新建静态网站时自动分配内容目录，允许指定已有目录，并在同一表单中绑定域名和申请 HTTPS 证书。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lwl0820",
+  "assignee": "lwl0820",
+  "createdAt": "2026-11-20",
+  "completedAt": "2026-11-20",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "0876e972bf33443ae85950fac4967b77561e8a93",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-29-static-websites",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "implementation_status": "默认目录与建站时绑定 HTTPS 已实现，Go、前端及隔离浏览器与 Nginx 联调通过。"
+  }
+}
