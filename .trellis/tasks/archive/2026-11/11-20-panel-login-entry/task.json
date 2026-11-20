@@ -1,0 +1,29 @@
+{
+  "id": "panel-login-entry",
+  "name": "panel-login-entry",
+  "title": "面板登录入口校验",
+  "description": "允许配置专用登录路径，未登录访问其他面板地址返回 404，并提供可留空的安装脚本选项。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lwl0820",
+  "assignee": "lwl0820",
+  "createdAt": "2026-11-20",
+  "completedAt": "2026-11-20",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "implementation_status": "功能已实现并通过验收，主分支提交 c53c396",
+    "local_validation": "Go 定向测试和 vet、前端类型检查和静态检查、8 条 API 与路由测试、生产构建、隔离安装冒烟、真实 Chrome 与 Nginx 联调均通过。HTTPS 使用测试证书，HTTP-01 以真实 Nginx 验证挑战文件读取。"
+  }
+}

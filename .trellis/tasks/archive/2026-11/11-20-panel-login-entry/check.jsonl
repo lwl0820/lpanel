@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/runtime-contract.md","reason":"校验账户会话、安装配置和 API 的兼容性"}
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"校验 Nginx、安装探针与证书验证的边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"按范围执行 Go 测试和隔离验收"}
+{"file":".trellis/spec/frontend/api-contract.md","reason":"校验前端登录地址和 API 错误行为"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"按范围检查路由和实际浏览器操作"}

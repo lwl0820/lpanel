@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端配置、会话与部署约定的索引"}
+{"file":".trellis/spec/backend/runtime-contract.md","reason":"CLI、认证和配置持久化的现有契约"}
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"Nginx 生效回读、安装和证书验证的现有契约"}
+{"file":".trellis/spec/frontend/index.md","reason":"前端登录、设置表单和路由规范的索引"}
+{"file":".trellis/spec/frontend/api-contract.md","reason":"前端会话请求、错误处理和页面行为"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"现有登录、退出和升级重连的状态边界"}
