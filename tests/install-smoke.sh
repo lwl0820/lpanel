@@ -14,8 +14,8 @@ set -euo pipefail
 printf '%s\n' "$*" >> /opt/lpanel/.tmp/cli-arguments
 case "$1" in
   init)
-    read -r password
-    [[ "$password" == test-password ]] || exit 9
+    IFS= read -r password
+    [[ "$password" == "${EXPECTED_PASSWORD:-test-password}" ]] || exit 9
     mkdir -p /opt/lpanel/data
     printf '{"initialized":true}\n' > /opt/lpanel/data/config.json ;;
   setup-nginx) ;;
@@ -57,10 +57,11 @@ export TMPDIR=/work/.tmp
 export PATH="/fixture/bin:$PATH"
 archive="/fixture/$ARCHIVE"
 # 正常首次安装使用真实 bash、tar、Python 和文件操作，仅系统服务/包管理为替身。
-printf 'admin\ntest-password\ntest-password\n8443\n\n' | bash /source/deploy/install.sh --archive "$archive" > /work/.tmp/install-result
+printf '\ntest-password\ntest-password\n\n\n' | bash /source/deploy/install.sh --archive "$archive" > /work/.tmp/install-result
 [[ -f /opt/lpanel/data/config.json && -L /opt/lpanel/current ]]
 grep -q '面板安装完成，访问地址：http://' /work/.tmp/install-result
-! grep -q 'test-password' /opt/lpanel/.tmp/cli-arguments
+grep -q -- '--username admin --port 8443' /opt/lpanel/.tmp/cli-arguments
+if grep -q 'test-password' /opt/lpanel/.tmp/cli-arguments; then exit 10; fi
 [[ -f /etc/systemd/system/lpanel.service && -f /etc/systemd/system/lpanel-renew.timer ]]
 cp /opt/lpanel/data/config.json /work/.tmp/before-config
 if bash /source/deploy/install.sh --archive "$archive" > /work/.tmp/repeat-result 2>&1; then exit 11; fi
@@ -78,11 +79,40 @@ rm /etc/nginx/nginx.conf
 if printf 'admin\ntest-password\ntest-password\n8443\n' | PORT_CONFLICT=1 bash /source/deploy/install.sh --archive "$archive" > /work/.tmp/port-result 2>&1; then exit 13; fi
 grep -q '已被占用' /work/.tmp/port-result
 [[ ! -e /opt/lpanel/data/config.json ]]
-# 签发失败保留 HTTP，不能把 HTTPS 地址报为成功。
-printf 'admin\ntest-password\ntest-password\n8443\npanel.example.com\ny\ny\n\n' | FAIL_CERT=1 bash /source/deploy/install.sh --archive "$archive" > /work/.tmp/cert-result 2>&1
+# 混合输入只读取缺项，签发失败时保留 HTTP。
+printf 'mixed-admin\npanel.example.com\ny\n\n' | FAIL_CERT=1 bash /source/deploy/install.sh \
+  --archive "$archive" --password test-password --port 8443 --auto-cert y > /work/.tmp/cert-result 2>&1
 grep -q '证书未启用' /work/.tmp/cert-result
 grep -q '访问地址：http://192.0.2.10:8443' /work/.tmp/cert-result
-! grep -q '访问地址：https://' /work/.tmp/cert-result
+if grep -q '访问地址：https://' /work/.tmp/cert-result; then exit 18; fi
 [[ -f /opt/lpanel/data/config.json ]]
-echo '安装脚本分支验证通过：首次安装、参数保密、重跑保留、Nginx/端口冲突、证书失败保留 HTTP。'
+grep -q -- '--username mixed-admin --port 8443' /opt/lpanel/.tmp/cli-arguments
+rm -rf /opt/lpanel
+# 关闭标准输入，显式空域名允许 HTTP 安装，密码中的空格和符号保留。
+cli_password=' leading $pass\!?# '
+EXPECTED_PASSWORD="$cli_password" bash /source/deploy/install.sh \
+  --archive "$archive" --username cli-admin --password "$cli_password" --port 09443 --domain '' \
+  </dev/null > /work/.tmp/cli-http-result 2>&1
+grep -q '访问地址：http://192.0.2.10:9443' /work/.tmp/cli-http-result
+grep -q -- '--username cli-admin --port 9443' /opt/lpanel/.tmp/cli-arguments
+if grep -Fq -- "$cli_password" /work/.tmp/cli-http-result /opt/lpanel/.tmp/cli-arguments; then exit 14; fi
+rm -rf /opt/lpanel
+# 未提供证书邮箱时才读取输入。显式空邮箱可直接走 HTTPS 分支。
+if bash /source/deploy/install.sh --archive "$archive" --username cli-admin --password test-password \
+  --port 8443 --domain panel.example.com --auto-cert y --agree-tos \
+  </dev/null > /work/.tmp/eof-result 2>&1; then exit 15; fi
+grep -q '缺少证书联系邮箱' /work/.tmp/eof-result
+[[ ! -e /opt/lpanel ]]
+bash /source/deploy/install.sh --archive "$archive" --username cli-admin --password test-password \
+  --port 8443 --domain panel.example.com --auto-cert y --agree-tos --email '' \
+  </dev/null > /work/.tmp/cli-https-result 2>&1
+grep -q '访问地址：https://panel.example.com:8443' /work/.tmp/cli-https-result
+grep -Fxq -- 'bind-panel --root /opt/lpanel --domain panel.example.com --auto-cert --agree-tos --email ' /opt/lpanel/.tmp/cli-arguments
+rm -rf /opt/lpanel
+if bash /source/deploy/install.sh --password --domain '' </dev/null > /work/.tmp/missing-value-result 2>&1; then exit 16; fi
+grep -q -- '--password 缺少参数值' /work/.tmp/missing-value-result
+if bash /source/deploy/install.sh --username cli-admin --password '' </dev/null > /work/.tmp/empty-password-result 2>&1; then exit 17; fi
+grep -q '密码长度须为 8 至 72 字节' /work/.tmp/empty-password-result
+[[ ! -e /opt/lpanel ]]
+echo '安装脚本分支验证通过，覆盖交互、混合输入、无人值守、缺项、密码传递、重跑保护、端口冲突和证书失败回退。'
 SH

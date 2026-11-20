@@ -27,7 +27,32 @@ sudo bash deploy/install.sh --repository 你的账号/你的仓库
 sudo bash deploy/install.sh --archive /服务器路径/lpanel_v0.1.0_linux_amd64.tar.gz
 ```
 
-脚本会依次询问管理员账号、隐藏输入的密码及确认、面板端口、可选域名和是否自动申请证书。申请证书时还需同意证书服务条款，联系邮箱可留空。密码只通过标准输入传给初始化命令，不作为命令行参数传递。
+## 命令行参数
+
+可以按需传入参数。脚本只询问当前安装方式需要且尚未提供的配置。执行 `bash deploy/install.sh --help` 可查看用法。
+
+| 参数 | 用途 |
+| --- | --- |
+| `--repository <账号/仓库>` | 指定 GitHub 发布仓库。在线安装时，依次使用命令行参数、`LPANEL_REPOSITORY` 和交互输入。 |
+| `--archive <路径>` | 指定本地发行包。校验文件放在发行包旁。 |
+| `--username <账号>` | 设置管理员账号。交互默认值为 `admin`。 |
+| `--password <密码>` | 设置单行管理员密码，长度为 8 至 72 字节。密码以 `--` 开头时使用 `--password=<密码>`。省略时隐藏输入并要求确认。 |
+| `--port <端口>` | 设置面板端口。交互默认值为 `8443`。 |
+| `--domain <域名>` | 绑定面板域名。`--domain ''` 使用服务器地址并跳过证书选项。 |
+| `--auto-cert y\|n` | 有域名时设置是否申请 HTTPS 证书。交互默认值为 `n`。 |
+| `--agree-tos` | 申请证书时同意服务条款。 [Let’s Encrypt 服务条款](https://letsencrypt.org/repository/) |
+| `--email <邮箱>` | 申请证书时的联系邮箱。`--email ''` 表示留空。 |
+
+部署环境已将管理员密码设置为 Shell 变量 `LPANEL_PASSWORD` 时，可通过以下命令直接安装 HTTP 面板。
+
+```bash
+sudo bash deploy/install.sh --repository lwl0820/lpanel \
+  --username admin --password "$LPANEL_PASSWORD" --port 8443 --domain '' </dev/null
+```
+
+需要在安装时申请证书，可改用 `--domain panel.example.com --auto-cert y --agree-tos --email ''`，将示例域名换成自己的域名。
+
+使用 `--password` 时，安装运行期间进程列表可能显示密码。若直接键入密码，终端历史也可能记录它。脚本通过标准输入将密码交给面板初始化。手动安装时可省略该参数，使用隐藏输入。
 
 ## 域名与 HTTPS
 
@@ -69,4 +94,4 @@ bash -n deploy/install.sh
 bash tests/install-smoke.sh
 ```
 
-第二条命令使用一次性 Debian 容器，真实执行 bash、解包、初始化文件和服务文件安装；包管理、系统服务及证书使用命令替身，覆盖首次安装、密码不进入参数、重复安装保留、Nginx/端口冲突、证书失败保留 HTTP。它不代表真实 apt 安装、systemd 启动、服务器重启或公网签发已经验收。
+第二条命令使用一次性 Debian 容器，验证交互、混合输入和无人值守安装，以及重复安装保留、Nginx 和端口冲突、证书失败保留 HTTP。测试真实执行 Bash、解包和安装文件写入，包管理、系统服务和证书使用命令替身。目标环境结果见[验收记录](validation.md)。

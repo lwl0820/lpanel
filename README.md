@@ -70,9 +70,13 @@ unset panel_password
 curl -fsSL https://raw.githubusercontent.com/lwl0820/lpanel/main/deploy/install.sh -o lpanel-install.sh && sudo bash lpanel-install.sh --repository lwl0820/lpanel
 ```
 
-脚本会下载并校验适合服务器架构的最新正式发行包。按提示设置管理员账号、密码和面板端口，也可以绑定域名并申请 HTTPS 证书。
+脚本会下载并校验适合服务器架构的最新正式发行包。可以预先指定安装配置，脚本只询问当前安装方式所需的缺项。下面的命令指定管理员账号和面板端口。执行时按提示设置密码和域名。
 
-详细步骤、端口要求和维护命令见[安装说明](docs/install.md)。
+```bash
+sudo bash lpanel-install.sh --repository lwl0820/lpanel --username admin --port 8443
+```
+
+安装参数填齐后可无人值守执行。 [安装参数和示例](docs/install.md#命令行参数)
 
 ## 在线卸载
 

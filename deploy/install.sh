@@ -2,14 +2,48 @@
 set -euo pipefail
 # 安装只管理自己的目录，不接管已有 Nginx 或其他面板。
 fail() { echo "安装失败：$*" >&2; exit 1; }
-ask() { local text="$1" default="$2"; read -r -p "$text [$default]：" answer; answer="${answer:-$default}"; }
-repository="${LPANEL_REPOSITORY:-}"
-archive=""
+ask() {
+  local target="$1" text="$2" default="$3" answer
+  read -r -p "$text [$default]：" answer || fail "标准输入已结束，缺少$text"
+  printf -v "$target" '%s' "${answer:-$default}"
+}
+# 按变量是否设置区分省略参数和显式空值。
+unset repository archive username password panel_port domain auto_cert agree_tos email
 while (($#)); do
   case "$1" in
-    --repository) (($# >= 2)) || fail '缺少仓库参数'; repository="$2"; shift 2 ;;
-    --archive) (($# >= 2)) || fail '缺少发行包路径'; archive="$2"; shift 2 ;;
-    --help) echo '用法：sudo bash install.sh --repository owner/repo，或 --archive /路径/lpanel_vX.Y.Z_linux_ARCH.tar.gz'; exit 0 ;;
+    --repository|--archive|--username|--password|--port|--domain|--auto-cert|--email)
+      (($# >= 2)) && [[ "$2" != --* ]] || fail "$1 缺少参数值"
+      case "$1" in
+        --repository) repository="$2" ;;
+        --archive) archive="$2" ;;
+        --username) username="$2" ;;
+        --password) password="$2" ;;
+        --port) panel_port="$2" ;;
+        --domain) domain="$2" ;;
+        --auto-cert) auto_cert="$2" ;;
+        --email) email="$2" ;;
+      esac
+      shift 2 ;;
+    --password=*) password="${1#*=}"; shift ;;
+    --agree-tos) agree_tos=y; shift ;;
+    --help)
+      cat <<'HELP'
+用法：sudo bash install.sh [选项]
+
+  --repository <账号/仓库>  指定 GitHub 发布仓库
+  --archive <发行包路径>    使用本地发行包
+  --username <账号>         管理员账号
+  --password <密码>         管理员密码。以 -- 开头时使用 --password=<密码>
+  --port <端口>             面板端口
+  --domain <域名>           面板域名。传入空串使用服务器地址
+  --auto-cert <y或n>        有域名时是否自动申请 HTTPS 证书
+  --agree-tos               同意证书服务条款
+  --email <邮箱>            证书联系邮箱。可传入空串
+  --help                    显示帮助
+
+省略的配置会按安装方式提示输入。直接传入的密码可能出现在进程列表和终端历史中。
+HELP
+      exit 0 ;;
     *) fail "未知参数：$1" ;;
   esac
 done
@@ -28,18 +62,23 @@ command -v apt-get >/dev/null || fail '系统缺少 apt-get'
 if command -v nginx >/dev/null || [[ -e /etc/nginx/nginx.conf ]]; then
   fail '检测到已有 Nginx，请使用干净服务器或先自行迁移，安装不会覆盖配置'
 fi
-# 读取监听端口；精简系统没有 ss 时直接读取 Linux 的监听表。
-ask '管理员账号' admin; username="$answer"
-[[ -n "$username" ]] || fail '管理员账号不能为空'
-read -r -s -p '管理员密码（8 至 72 字节）：' password; echo
-read -r -s -p '再次输入密码：' confirmation; echo
-[[ "$password" == "$confirmation" ]] || fail '两次密码不一致'
+[[ -v username ]] || ask username '管理员账号' admin
+[[ "$username" == *[![:space:]]* ]] || fail '管理员账号不能为空'
+if [[ ! -v password ]]; then
+  IFS= read -r -s -p '管理员密码（8 至 72 字节）：' password || fail '标准输入已结束，缺少管理员密码'
+  echo
+  IFS= read -r -s -p '再次输入密码：' confirmation || fail '标准输入已结束，缺少密码确认'
+  echo
+  [[ "$password" == "$confirmation" ]] || fail '两次密码不一致'
+  unset confirmation
+fi
+[[ "$password" != *$'\n'* && "$password" != *$'\r' ]] || fail '密码须为单行'
 password_size="$(LC_ALL=C printf '%s' "$password" | wc -c)"
 ((password_size >= 8 && password_size <= 72)) || fail '密码长度须为 8 至 72 字节'
-unset confirmation
-ask '面板端口' 8443; panel_port="$answer"
-[[ "$panel_port" =~ ^[0-9]+$ ]] && ((10#$panel_port >= 1 && 10#$panel_port <= 65535)) || fail '端口无效'
-panel_port=$((10#$panel_port))
+[[ -v panel_port ]] || ask panel_port '面板端口' 8443
+[[ "$panel_port" =~ ^0*([1-9][0-9]{0,4})$ ]] && ((BASH_REMATCH[1] <= 65535)) || fail '端口无效'
+panel_port="${BASH_REMATCH[1]}"
+# 精简系统没有 ss 时直接读取 Linux 的监听表。
 for candidate in 80 443 "$panel_port" 18080; do
   if command -v ss >/dev/null; then
     [[ -z "$(ss -H -ltn "sport = :$candidate")" ]] || fail "端口 $candidate 已被占用，请先处理冲突"
@@ -51,30 +90,35 @@ for candidate in 80 443 "$panel_port" 18080; do
   fi
 done
 [[ "$panel_port" != 18080 ]] || fail '面板端口不能与内部端口 18080 相同'
-ask '面板域名（留空则使用服务器地址）' ''; domain="$answer"
-auto_cert=n
-agree_tos=n
-email=''
+[[ -v domain ]] || ask domain '面板域名（留空则使用服务器地址）' ''
 if [[ -n "$domain" ]]; then
   [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ && "$domain" == *.* ]] || fail '请输入不带协议和端口的普通域名'
   domain="${domain,,}"
-  ask '自动申请 HTTPS 证书？y/n' n; auto_cert="${answer,,}"
-  [[ "$auto_cert" == y || "$auto_cert" == n ]] || fail '请输入 y 或 n'
-  if [[ "$auto_cert" == y ]]; then
-    echo '域名需已解析到本机，并开放公网 80 端口和面板端口。'
-    echo '证书服务条款：https://letsencrypt.org/repository/'
-    ask '是否同意证书服务条款？y/n' n; agree_tos="${answer,,}"
-    [[ "$agree_tos" == y ]] || fail '申请证书需要同意服务条款'
-    ask '证书联系邮箱（可留空）' ''; email="$answer"
-  fi
+  [[ -v auto_cert ]] || ask auto_cert '自动申请 HTTPS 证书？y/n' n
 fi
-if [[ -n "$archive" ]]; then
+auto_cert="${auto_cert-n}"
+auto_cert="${auto_cert,,}"
+[[ "$auto_cert" == y || "$auto_cert" == n ]] || fail '是否自动申请证书须为 y 或 n'
+if [[ "$auto_cert" == y ]]; then
+  [[ -n "$domain" ]] || fail '自动申请 HTTPS 证书需要指定面板域名'
+  echo '域名需已解析到本机，并开放公网 80 端口和面板端口。'
+  echo '证书服务条款：https://letsencrypt.org/repository/'
+  [[ -v agree_tos ]] || ask agree_tos '是否同意证书服务条款？y/n' n
+  [[ "${agree_tos,,}" == y ]] || fail '申请证书需要同意服务条款'
+  [[ -v email ]] || ask email '证书联系邮箱（可留空）' ''
+fi
+if [[ ! -v repository && -n "${LPANEL_REPOSITORY:-}" ]]; then
+  repository="$LPANEL_REPOSITORY"
+fi
+if [[ -v archive ]]; then
   [[ -f "$archive" && -f "$archive.sha256" ]] || fail '本地发行包或对应 .sha256 文件不存在'
   archive="$(cd -- "$(dirname -- "$archive")" && pwd)/$(basename -- "$archive")"
 else
-  if [[ -z "$repository" ]]; then ask 'GitHub 发布仓库（owner/repo）' ''; repository="$answer"; fi
+  archive=''
+  [[ -v repository ]] || ask repository 'GitHub 发布仓库（owner/repo）' ''
   [[ -n "$repository" ]] || fail '请配置真实发布仓库或指定本地发行包'
 fi
+repository="${repository-}"
 if [[ -n "$repository" ]]; then
   [[ "$repository" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]] || fail '仓库格式须为 owner/repo'
 fi

@@ -2,7 +2,7 @@
 
 ## 1. 范围与触发
 
-来自 internal/panel 的 domains.go、projects.go、sites.go、upgrades.go、upgrade_worker.go，以及 deploy/install.sh、deploy/uninstall.sh、scripts/build-release.sh 和 .github/workflows/release.yml。修改网站入口、Compose、证书、发行格式、升级或卸载流程时必须同步核对这些边界。
+来自 internal/panel 的 domains.go、projects.go、sites.go、upgrades.go、upgrade_worker.go，以及 deploy/install.sh、deploy/uninstall.sh、scripts/build-release.sh 和 .github/workflows/release.yml。修改网站入口、Compose、证书、发行格式、安装、升级或卸载流程时必须同步核对这些边界。
 
 ## 2. 签名
 
@@ -12,6 +12,7 @@
 - `POST /api/v1/sites` 支持可选 `binding: {domain, auto_certificate}`。响应为 `201` 和原顶层网站字段，可附加 `binding`、`operation` 或 `certificate_error`。
 - UpgradeWorker(ctx, root, version, operationID, releaseDir) 在独立 systemd service 中执行版本切换。
 - CLI：setup-nginx --root；bind-panel --root --domain [--auto-cert --agree-tos --email --acme-server]；renew --root；upgrade-worker 由内部升级流程调用。
+- 安装入口 `sudo bash deploy/install.sh [选项]` 支持 `--repository`、`--archive`、`--username`、`--password`、`--port`、`--domain`、`--auto-cert`、`--agree-tos`、`--email`。 [参数详情](../../../docs/install.md#命令行参数)
 - 官方安装布局的卸载入口为 `sudo bash deploy/uninstall.sh`。脚本从终端询问是否清理 Compose 项目，并单独读取最终确认。
 
 ## 3. 数据与环境契约
@@ -28,6 +29,8 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 推送正式标签会触发 `.github/workflows/release.yml`。从 `main` 手动触发时输入已有的 `tag`。两种路径均检出标签源码、执行 `scripts/build-release.sh`、校验 amd64 和 arm64 发行包，再以四个附件发布正式 Release。安装和升级通过 GitHub Release 条目读取发行包。
 
+在线安装按命令行仓库、`LPANEL_REPOSITORY`、交互输入的顺序取值。安装仅询问当前方式适用的缺项。域名存在时才询问是否申请证书，申请时才询问条款和邮箱。显式空域名表示使用服务器地址，显式空邮箱表示留空。密码始终通过标准输入交给面板初始化。 [密码传递约定](./logging-guidelines.md)
+
 卸载处理 `/opt/lpanel/current`、`/opt/lpanel/releases`、三个 LPanel systemd 单元和带 LPanel 管理标记的 `/etc/nginx/conf.d/lpanel.conf`。移除该配置停用面板及其管理的业务域名入口。默认保留项目容器、目录和记录。选中 Compose 清理时，以 SQLite `projects.id` 为准，使用 `lpanel-<ID>`、项目目录内的 `compose.yaml` 和 `.env` 执行 `down --remove-orphans`。Docker 清理成功后移除该项目目录（含相对挂载目录）、项目记录及 `bindings.payload` 中同一项目的绑定。保留其他数据库记录、证书、Docker 卷、镜像和目录外的数据。
 
 ## 4. 校验与错误矩阵
@@ -43,6 +46,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 | 不同进程打开数据库 | CLI Open 不重置主服务运行中操作，只有 Serve 启动恢复中断状态 |
 | 缺少发行附件 | 保持不可升级，不因版本号较新而重新显示升级按钮 |
 | 新版启动失败 | 恢复 previous current，并重启上一版 |
+| 安装参数缺值、值无效或交互输入提前结束 | 安装写入前退出，提示对应选项或配置 |
 | 安装时域名或证书失败 | 最终地址使用服务器 IP 的 HTTP 入口，不输出无法解析域名的假可用地址 |
 | 卸载取消、无法确认服务或配置归属、项目目录含实际挂载点 | 保留资源并输出提示 |
 | 卸载时 Compose 清理失败或 Nginx 配置检查、重载失败 | Compose 失败保留该项目目录和记录。Nginx 失败时恢复配置文件。两者均保留面板程序，便于处理后重试 |
@@ -52,6 +56,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 正常：配置扫描→部署→读取真实端口→绑定→证书；网站编辑同步已有域名配置；系统独立 worker 升级并保存结果。
 基础：无发布源显示未配置，无域名可用 IP:端口管理，无证书不阻止 HTTP 网站使用。
 建站：留空目录分配新目录，填写域名建立 HTTP 入口。勾选证书后再启动后台申请，证书失败时保留 HTTP，删除网站时保留内容目录。
+安装：完整参数支持关闭标准输入。提供账号和端口时，脚本仍会按需询问密码与域名。选择申请证书但域名为空时在安装前报错。
 失败：无效 Nginx 配置回退旧文件；网站保存/删除失败恢复旧记录；删除项目不使用 --volumes，删除网站不删除内容目录。
 卸载：默认路径可在保留业务容器的情况下停用面板。清理选项在最终确认前列出项目和目录，重复执行已完成的卸载时提示无需操作。
 
@@ -63,6 +68,8 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 `internal/panel/sites_test.go` 覆盖默认目录、建站即绑 HTTP、首次绑定回滚及证书任务启动或签发失败时的保留行为。
 
+`tests/install-smoke.sh` 核对混合输入、无人值守安装、必填项缺失、显式空值及密码经标准输入交给初始化的行为。
+
 ## 7. 错误与正确用法
 
 错误：让证书续期 CLI 调用 Open 时把全部 running 操作置为 failed；把 ps JSON Lines 直接当整体数组解析；仅因版本号较新就认为有可用发行包。
@@ -73,3 +80,5 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 补发已有标签使用 `gh workflow run release.yml --ref main -f tag=vX.Y.Z`。工作流定义从 `main` 读取，发行包仍使用原标签提交构建。
 
 建站默认目录应位于 `Root/sites/`。将内容放在权限为 `0700` 的 `data/` 会阻止 Nginx 读取。证书申请在 HTTP 绑定确认生效后开始，页面通过任务最终结果确认 HTTPS。
+
+安装脚本以参数是否提供决定是否交互。`--domain ''` 明确选择服务器地址，不能把空字符串当作缺项再次询问。
