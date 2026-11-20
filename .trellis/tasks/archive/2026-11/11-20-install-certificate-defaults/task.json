@@ -1,0 +1,28 @@
+{
+  "id": "install-certificate-defaults",
+  "name": "install-certificate-defaults",
+  "title": "调整安装脚本证书交互默认值",
+  "description": "有域名时默认申请证书、同意条款，并从面板域名生成默认联系邮箱。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lwl0820",
+  "assignee": "lwl0820",
+  "createdAt": "2026-11-20",
+  "completedAt": "2026-11-20",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "72903627a9ca5b9b163f88f5c384bcccc074572b",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "local_validation": "Bash 语法检查及独立 Linux 命名空间中的安装冒烟测试通过。系统服务和证书签发使用测试替身。"
+  }
+}

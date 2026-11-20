@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "安装脚本变更所适用的部署规范入口"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "选择安装脚本语法和冒烟验证范围"}
