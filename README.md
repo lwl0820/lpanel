@@ -64,16 +64,16 @@ unset panel_password
 
 ## 在线一键安装
 
-在 Debian 12/13 或 Ubuntu 22.04/24.04/26.04 LTS 服务器（amd64 或 arm64）的终端运行下方命令。服务器需要使用 systemd，能访问 GitHub，并已安装 `curl` 和 `sudo`。
+在 Debian 12/13 或 Ubuntu 22.04/24.04/26.04 LTS 服务器（amd64 或 arm64）上，以 root 用户运行下方命令。服务器需要使用 systemd，能访问 GitHub，并已安装 `curl`。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lwl0820/lpanel/main/deploy/install.sh -o lpanel-install.sh && sudo bash lpanel-install.sh --repository lwl0820/lpanel
+curl -fsSL https://raw.githubusercontent.com/lwl0820/lpanel/main/deploy/install.sh -o lpanel-install.sh && bash lpanel-install.sh --repository lwl0820/lpanel
 ```
 
 脚本会下载并校验适合服务器架构的最新正式发行包。可以预先指定安装配置，脚本只询问当前安装方式所需的缺项。下面的命令指定管理员账号和面板端口。执行时按提示设置密码和域名。
 
 ```bash
-sudo bash lpanel-install.sh --repository lwl0820/lpanel --username admin --port 8443
+bash lpanel-install.sh --repository lwl0820/lpanel --username admin --port 8443
 ```
 
 安装参数填齐后可无人值守执行。安装完成后可用 `lpanel manage --help` 查看终端管理命令。 [安装参数和示例](docs/install.md#命令行参数) · [终端管理说明](docs/install.md#在服务器终端管理面板)
