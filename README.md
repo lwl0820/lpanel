@@ -84,6 +84,25 @@ curl -fsSL https://raw.githubusercontent.com/lwl0820/lpanel/main/deploy/uninstal
 
 默认仅卸载面板，Compose 项目继续运行。也可选择同时删除面板登记的项目、容器和项目目录，包括目录内的相对路径挂载数据。卸载后，由面板配置的域名访问入口会停用。删除和保留的内容见[卸载说明](docs/install.md#卸载)。
 
+## 发布版本
+
+在与远端 `main` 同步的待发布提交上创建 `vX.Y.Z` 标签并推送。以 `v0.1.2` 为例：
+
+```bash
+git tag -a v0.1.2 -m "LPanel v0.1.2"
+git push origin v0.1.2
+```
+
+[发布版本工作流](https://github.com/lwl0820/lpanel/actions/workflows/release.yml)会从标签构建 Linux amd64 和 arm64 发行包，校验后将发行包和对应的 SHA-256 校验文件发布到 GitHub Releases。
+
+如果标签已经推送但还没有对应的 Release，可以从 GitHub Actions 手动运行「发布版本」，选择 `main` 并填写已有标签。也可以用 GitHub CLI 运行：
+
+```bash
+gh workflow run release.yml --ref main -f tag=v0.1.1
+```
+
+手动运行时，工作流仍使用该标签指向的提交来构建发行包。
+
 ## 检查与验证
 
 ```bash

@@ -2,7 +2,7 @@
 
 ## 1. 范围与触发
 
-来自 internal/panel 的 domains.go、projects.go、sites.go、upgrades.go、upgrade_worker.go，以及 deploy/install.sh、deploy/uninstall.sh 和 scripts/build-release.sh。修改网站入口、Compose、证书、发行格式、升级或卸载流程时必须同步核对这些边界。
+来自 internal/panel 的 domains.go、projects.go、sites.go、upgrades.go、upgrade_worker.go，以及 deploy/install.sh、deploy/uninstall.sh、scripts/build-release.sh 和 .github/workflows/release.yml。修改网站入口、Compose、证书、发行格式、升级或卸载流程时必须同步核对这些边界。
 
 ## 2. 签名
 
@@ -25,6 +25,8 @@ Compose config 输出的 published 是字符串，可能缺失或为动态端口
 Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /.lpanel/config 返回本次标识。重载后用候选 HTTP/HTTPS 地址、Host/SNI 从本机回读匹配才提交；NginxProbe 是测试可替换的实际运行边界。仅本机探针接受测试 CA，不影响用户访问的证书验证；公开验证文件为 Root/acme-webroot/.well-known/acme-challenge，私钥为 Root/data/acme。申请和续期必须使用同一组 config/work/log 目录。Certbot 仅申请和续期，不自动改写站点。
 
 发布标签为 vX.Y.Z，附件 lpanel_vX.Y.Z_linux_ARCH.tar.gz 及同名 .sha256。包内平铺 lpanel、web、deploy。程序和前端一起切换 current；data 不随发行包覆盖。公开发布源保存在 upgrade_settings，初始值来自 Config.ReleaseRepository。
+
+推送正式标签会触发 `.github/workflows/release.yml`。从 `main` 手动触发时输入已有的 `tag`。两种路径均检出标签源码、执行 `scripts/build-release.sh`、校验 amd64 和 arm64 发行包，再以四个附件发布正式 Release。安装和升级通过 GitHub Release 条目读取发行包。
 
 卸载处理 `/opt/lpanel/current`、`/opt/lpanel/releases`、三个 LPanel systemd 单元和带 LPanel 管理标记的 `/etc/nginx/conf.d/lpanel.conf`。移除该配置停用面板及其管理的业务域名入口。默认保留项目容器、目录和记录。选中 Compose 清理时，以 SQLite `projects.id` 为准，使用 `lpanel-<ID>`、项目目录内的 `compose.yaml` 和 `.env` 执行 `down --remove-orphans`。Docker 清理成功后移除该项目目录（含相对挂载目录）、项目记录及 `bindings.payload` 中同一项目的绑定。保留其他数据库记录、证书、Docker 卷、镜像和目录外的数据。
 
@@ -67,5 +69,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 正确：仅 Serve 启动时恢复普通中断操作；按真实 CLI 输出解析；版本、附件和检查结果共同决定是否可升级。CLI 绑定面板 HTTPS 后重启主服务，确保 Secure Cookie 与磁盘配置一致。
 
 卸载清理以登记项目为单位，仅在 `down --remove-orphans` 成功后清理目录和记录。全局 Docker 清理或按项目名前缀批量删除会影响其他业务资源。
+
+补发已有标签使用 `gh workflow run release.yml --ref main -f tag=vX.Y.Z`。工作流定义从 `main` 读取，发行包仍使用原标签提交构建。
 
 建站默认目录应位于 `Root/sites/`。将内容放在权限为 `0700` 的 `data/` 会阻止 Nginx 读取。证书申请在 HTTP 绑定确认生效后开始，页面通过任务最终结果确认 HTTPS。
