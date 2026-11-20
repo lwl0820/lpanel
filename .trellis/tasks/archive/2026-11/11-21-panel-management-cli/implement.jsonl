@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/runtime-contract.md","reason":"核对现有 CLI、管理员、配置和登录入口契约。"}
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"复用域名、证书、Nginx 生效检查和安装升级流程。"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"核对密码输入、终端输出和日志约定。"}
+{"file":".trellis/spec/frontend/api-contract.md","reason":"核对面板登录地址所用配置字段及 IPv6 格式。"}

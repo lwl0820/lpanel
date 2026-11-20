@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"选择涉及 CLI、配置生效和安装入口的定向检查。"}
+{"file":".trellis/spec/backend/runtime-contract.md","reason":"验证登录凭据、入口、配置和安装目录的兼容性。"}
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"验证 Nginx 配置生效、证书切换及既有业务绑定。"}
+{"file":".trellis/spec/frontend/api-contract.md","reason":"验证网页复制的 IPv6 登录地址与终端输出一致。"}
