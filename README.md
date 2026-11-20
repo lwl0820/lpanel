@@ -72,6 +72,16 @@ curl -fsSL https://raw.githubusercontent.com/lwl0820/lpanel/main/deploy/install.
 
 详细步骤、端口要求和维护命令见[安装说明](docs/install.md)。
 
+## 在线卸载
+
+在安装了 LPanel 的服务器上运行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lwl0820/lpanel/main/deploy/uninstall.sh -o lpanel-uninstall.sh && sudo bash lpanel-uninstall.sh
+```
+
+默认仅卸载面板，Compose 项目继续运行。也可选择同时删除面板登记的项目、容器和项目目录，包括目录内的相对路径挂载数据。卸载后，由面板配置的域名访问入口会停用。删除和保留的内容见[卸载说明](docs/install.md#卸载)。
+
 ## 检查与验证
 
 ```bash
@@ -82,7 +92,9 @@ npm --prefix web run lint
 npm --prefix web run test -- --run
 npm --prefix web run build
 bash -n deploy/install.sh
+bash -n deploy/uninstall.sh
 bash -n scripts/build-release.sh
+bash tests/uninstall-smoke.sh
 ```
 
 Go 检查显式限定项目目录，避免扫描前端依赖附带的 Go 示例。沿用开发准备步骤中的工作目录缓存变量。

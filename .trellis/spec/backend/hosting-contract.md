@@ -2,7 +2,7 @@
 
 ## 1. 范围与触发
 
-来自 internal/panel 的 domains.go、projects.go、sites.go、upgrades.go、upgrade_worker.go，以及 deploy/install.sh 和 scripts/build-release.sh。修改网站入口、Compose、证书、发行格式或升级流程时必须同步核对这些边界。
+来自 internal/panel 的 domains.go、projects.go、sites.go、upgrades.go、upgrade_worker.go，以及 deploy/install.sh、deploy/uninstall.sh 和 scripts/build-release.sh。修改网站入口、Compose、证书、发行格式、升级或卸载流程时必须同步核对这些边界。
 
 ## 2. 签名
 
@@ -11,6 +11,7 @@
 - SaveSite(ctx, Site)、DeleteSite(ctx, id) 同步网站记录和关联绑定。
 - UpgradeWorker(ctx, root, version, operationID, releaseDir) 在独立 systemd service 中执行版本切换。
 - CLI：setup-nginx --root；bind-panel --root --domain [--auto-cert --agree-tos --email --acme-server]；renew --root；upgrade-worker 由内部升级流程调用。
+- 官方安装布局的卸载入口为 `sudo bash deploy/uninstall.sh`。脚本从终端询问是否清理 Compose 项目，并单独读取最终确认。
 
 ## 3. 数据与环境契约
 
@@ -21,6 +22,8 @@ Compose config 输出的 published 是字符串，可能缺失或为动态端口
 Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /.lpanel/config 返回本次标识。重载后用候选 HTTP/HTTPS 地址、Host/SNI 从本机回读匹配才提交；NginxProbe 是测试可替换的实际运行边界。仅本机探针接受测试 CA，不影响用户访问的证书验证；公开验证文件为 Root/acme-webroot/.well-known/acme-challenge，私钥为 Root/data/acme。申请和续期必须使用同一组 config/work/log 目录。Certbot 仅申请和续期，不自动改写站点。
 
 发布标签为 vX.Y.Z，附件 lpanel_vX.Y.Z_linux_ARCH.tar.gz 及同名 .sha256。包内平铺 lpanel、web、deploy。程序和前端一起切换 current；data 不随发行包覆盖。公开发布源保存在 upgrade_settings，初始值来自 Config.ReleaseRepository。
+
+卸载处理 `/opt/lpanel/current`、`/opt/lpanel/releases`、三个 LPanel systemd 单元和带 LPanel 管理标记的 `/etc/nginx/conf.d/lpanel.conf`。移除该配置停用面板及其管理的业务域名入口。默认保留项目容器、目录和记录。选中 Compose 清理时，以 SQLite `projects.id` 为准，使用 `lpanel-<ID>`、项目目录内的 `compose.yaml` 和 `.env` 执行 `down --remove-orphans`。Docker 清理成功后移除该项目目录（含相对挂载目录）、项目记录及 `bindings.payload` 中同一项目的绑定。保留其他数据库记录、证书、Docker 卷、镜像和目录外的数据。
 
 ## 4. 校验与错误矩阵
 
@@ -34,18 +37,25 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 | 缺少发行附件 | 保持不可升级，不因版本号较新而重新显示升级按钮 |
 | 新版启动失败 | 恢复 previous current，并重启上一版 |
 | 安装时域名或证书失败 | 最终地址使用服务器 IP 的 HTTP 入口，不输出无法解析域名的假可用地址 |
+| 卸载取消、无法确认服务或配置归属、项目目录含实际挂载点 | 保留资源并输出提示 |
+| 卸载时 Compose 清理失败或 Nginx 配置检查、重载失败 | Compose 失败保留该项目目录和记录。Nginx 失败时恢复配置文件。两者均保留面板程序，便于处理后重试 |
 
 ## 5. 正常、基础与失败案例
 
 正常：配置扫描→部署→读取真实端口→绑定→证书；网站编辑同步已有域名配置；系统独立 worker 升级并保存结果。
 基础：无发布源显示未配置，无域名可用 IP:端口管理，无证书不阻止 HTTP 网站使用。
 失败：无效 Nginx 配置回退旧文件；网站保存/删除失败恢复旧记录；删除项目不使用 --volumes，删除网站不删除内容目录。
+卸载：默认路径可在保留业务容器的情况下停用面板。清理选项在最终确认前列出项目和目录，重复执行已完成的卸载时提示无需操作。
 
 ## 6. 必需测试
 
 项目测试覆盖短/长端口、变量、expose、JSONL、实际端口更新和保留卷；LPANEL_DOCKER_INTEGRATION=1 开启真实 Docker 测试。域名测试覆盖配置标识匹配、重载 0 但配置未生效、探针超时、原 HTTP/HTTPS 保留、Host/SNI 和 CLI Open 不打断服务任务；网站测试覆盖目录/绑定同步、失败恢复和内容保留。升级测试覆盖语义版本、附件、校验下载、成功/失败回退及鉴权。tests/install-smoke.sh 在一次性 Debian 容器中验证安装分支，系统服务和包管理使用替身，不能等同真实服务器验收。
 
+`bash tests/uninstall-smoke.sh` 在仓库 `.tmp` 中用实际文件和 SQLite 验证取消、默认保留、选中项目清理、失败恢复和重复执行。Docker、Nginx、systemd 使用命令替身。
+
 ## 7. 错误与正确用法
 
 错误：让证书续期 CLI 调用 Open 时把全部 running 操作置为 failed；把 ps JSON Lines 直接当整体数组解析；仅因版本号较新就认为有可用发行包。
 正确：仅 Serve 启动时恢复普通中断操作；按真实 CLI 输出解析；版本、附件和检查结果共同决定是否可升级。CLI 绑定面板 HTTPS 后重启主服务，确保 Secure Cookie 与磁盘配置一致。
+
+卸载清理以登记项目为单位，仅在 `down --remove-orphans` 成功后清理目录和记录。全局 Docker 清理或按项目名前缀批量删除会影响其他业务资源。
