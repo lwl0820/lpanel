@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 type Project struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
+	Directory   string `json:"directory,omitempty"`
 	Compose     string `json:"compose,omitempty"`
 	Environment string `json:"environment,omitempty"`
 	UpdatedAt   string `json:"updated_at"`
@@ -42,6 +44,7 @@ type ProjectPublisher struct {
 	Protocol      string `json:"Protocol"`
 }
 type ProjectContainer struct {
+	ID         string             `json:"ID"`
 	Name       string             `json:"Name"`
 	Service    string             `json:"Service"`
 	State      string             `json:"State"`
@@ -68,6 +71,7 @@ func (a *App) RegisterProjectRoutes() error {
 				WriteError(w, 500, "project_error", "读取项目失败")
 				return
 			}
+			p.Directory = a.projectDirectory(p.ID)
 			items = append(items, p)
 		}
 		if err = rows.Err(); err != nil {
@@ -123,7 +127,10 @@ func (a *App) RegisterProjectRoutes() error {
 			WriteError(w, 400, "invalid_action", "项目操作无效")
 			return
 		}
-		op, err := a.StartOperation("project_"+action, func(ctx context.Context) (string, error) { return a.runProjectAction(ctx, p, action) })
+		removeFiles := action == "delete" && r.URL.Query().Get("remove_files") == "true"
+		op, err := a.StartOperation("project_"+action, func(ctx context.Context) (string, error) {
+			return a.runProjectAction(ctx, p, action, removeFiles)
+		})
 		if err != nil {
 			WriteError(w, 500, "operation_error", err.Error())
 			return
@@ -156,12 +163,19 @@ func (a *App) RegisterProjectRoutes() error {
 		}
 		WriteJSON(w, 200, map[string]string{"log": a.redactProjectOutput(p, string(out))})
 	})))
+	a.Mux.Handle("GET /api/v1/projects/{id}/containers/{containerID}/logs", a.RequireAuth(http.HandlerFunc(a.projectContainerLogs)))
 	a.Mux.Handle("POST /api/v1/projects/{id}/bindings", a.RequireAuth(http.HandlerFunc(a.bindProject)))
 	return nil
+}
+func (a *App) projectDirectory(id string) string {
+	return filepath.Join(a.Root, "data/projects", id)
 }
 func (a *App) project(ctx context.Context, id string) (Project, error) {
 	var p Project
 	err := a.DB.QueryRowContext(ctx, "SELECT id,name,compose,environment,updated_at FROM projects WHERE id=?", id).Scan(&p.ID, &p.Name, &p.Compose, &p.Environment, &p.UpdatedAt)
+	if err == nil {
+		p.Directory = a.projectDirectory(p.ID)
+	}
 	return p, err
 }
 func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
@@ -199,8 +213,8 @@ func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 400, "compose_error", err.Error())
 		return
 	}
-	dir := filepath.Join(a.Root, "data/projects", p.ID)
-	if err = a.writeProjectFiles(p, dir); err != nil {
+	p.Directory = a.projectDirectory(p.ID)
+	if err = a.writeProjectFiles(p, p.Directory); err != nil {
 		WriteError(w, 500, "project_error", err.Error())
 		return
 	}
@@ -215,7 +229,7 @@ func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
 		DeploymentError string     `json:"deployment_error,omitempty"`
 	}{Project: p}
 	op, err := a.StartOperation("project_deploy", func(ctx context.Context) (string, error) {
-		return a.runProjectAction(ctx, p, "deploy")
+		return a.runProjectAction(ctx, p, "deploy", false)
 	})
 	if err != nil {
 		result.DeploymentError = "配置已保存，暂时无法开始部署。请打开「编辑配置」重新保存后重试。"
@@ -242,7 +256,7 @@ func (a *App) scanProject(ctx context.Context, p Project, dir string) ([]Project
 	}
 	projectDir := dir
 	if p.ID != "" {
-		projectDir = filepath.Join(a.Root, "data/projects", p.ID)
+		projectDir = a.projectDirectory(p.ID)
 		if err := os.MkdirAll(projectDir, 0700); err != nil {
 			return nil, err
 		}
@@ -331,7 +345,7 @@ func parseProjectPorts(data []byte) ([]ProjectPort, error) {
 	return items, nil
 }
 func (a *App) projectCommand(ctx context.Context, p Project, args ...string) ([]byte, error) {
-	dir := filepath.Join(a.Root, "data/projects", p.ID)
+	dir := a.projectDirectory(p.ID)
 	command := []string{"compose", "--project-name", "lpanel-" + p.ID, "--project-directory", dir, "--env-file", filepath.Join(dir, ".env"), "-f", filepath.Join(dir, "compose.yaml")}
 	command = append(command, args...)
 	out, err := a.Command(ctx, "docker", command...)
@@ -387,6 +401,31 @@ func (a *App) ProjectStatus(ctx context.Context, p Project) ([]ProjectContainer,
 	}
 	return decodeProjectContainers(out)
 }
+func (a *App) projectContainerLogs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	p, err := a.project(ctx, r.PathValue("id"))
+	if err != nil {
+		WriteError(w, 404, "not_found", "项目不存在")
+		return
+	}
+	items, err := a.ProjectStatus(ctx, p)
+	if err != nil {
+		WriteError(w, 502, "docker_error", err.Error())
+		return
+	}
+	id := r.PathValue("containerID")
+	if !slices.ContainsFunc(items, func(item ProjectContainer) bool { return item.ID == id }) {
+		WriteError(w, 404, "not_found", "此项目中没有该容器，请刷新项目列表")
+		return
+	}
+	out, err := a.Command(ctx, "docker", "logs", "--tail", "200", "--", id)
+	log := a.redactProjectOutput(p, string(out))
+	if err != nil {
+		WriteError(w, 502, "docker_error", fmt.Sprintf("读取容器日志失败：%s：%v", log, err))
+		return
+	}
+	WriteJSON(w, 200, map[string]string{"log": log})
+}
 func projectUpstream(items []ProjectContainer, service string, port int, scheme string) (string, error) {
 	for _, item := range items {
 		if item.Service != service || item.State != "running" {
@@ -408,7 +447,12 @@ func projectUpstream(items []ProjectContainer, service string, port int, scheme 
 	}
 	return "", fmt.Errorf("目标服务没有可用的已发布 TCP 端口，请先部署并启动项目")
 }
-func (a *App) runProjectAction(ctx context.Context, p Project, action string) (string, error) {
+func (a *App) runProjectAction(ctx context.Context, p Project, action string, removeFiles bool) (string, error) {
+	if action == "delete" && removeFiles {
+		if err := a.checkProjectDirectoryForRemoval(p.ID); err != nil {
+			return "", err
+		}
+	}
 	args := map[string][]string{"deploy": {"up", "-d", "--remove-orphans"}, "start": {"start"}, "stop": {"stop"}, "restart": {"restart"}, "delete": {"down", "--remove-orphans"}}[action]
 	out, err := a.projectCommand(ctx, p, args...)
 	if err != nil {
@@ -424,6 +468,11 @@ func (a *App) runProjectAction(ctx context.Context, p Project, action string) (s
 				if e = a.DeleteBinding(ctx, b.ID); e != nil {
 					return a.redactProjectOutput(p, string(out)), e
 				}
+			}
+		}
+		if removeFiles {
+			if err = os.RemoveAll(a.projectDirectory(p.ID)); err != nil {
+				return a.redactProjectOutput(p, string(out)), fmt.Errorf("删除项目文件失败：%w", err)
 			}
 		}
 		_, err = a.DB.ExecContext(ctx, "DELETE FROM projects WHERE id=?", p.ID)
@@ -457,6 +506,42 @@ func (a *App) runProjectAction(ctx context.Context, p Project, action string) (s
 		}
 	}
 	return a.redactProjectOutput(p, string(out)), nil
+}
+func (a *App) checkProjectDirectoryForRemoval(id string) error {
+	if !filepath.IsLocal(id) || id == "." || id != filepath.Base(id) {
+		return fmt.Errorf("无法确认项目目录，请检查项目记录")
+	}
+	dir := a.projectDirectory(id)
+	for _, path := range []string{filepath.Join(a.Root, "data"), filepath.Dir(dir), dir} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return fmt.Errorf("无法确认项目目录：%w", err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("无法清理项目文件，所选位置必须是普通目录：%s", path)
+		}
+	}
+	// 面板根路径可能经过符号链接，挂载点按系统实际路径识别。
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("无法确认项目目录：%w", err)
+	}
+	mountInfo, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return fmt.Errorf("无法检查项目目录的挂载点：%w", err)
+	}
+	unescape := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
+	for line := range strings.SplitSeq(string(mountInfo), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		mountPoint := unescape.Replace(fields[4])
+		if mountPoint == realDir || strings.HasPrefix(mountPoint, realDir+string(os.PathSeparator)) {
+			return fmt.Errorf("项目目录有宿主机挂载点，请先卸载：%s", mountPoint)
+		}
+	}
+	return nil
 }
 func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 	p, err := a.project(r.Context(), r.PathValue("id"))

@@ -177,6 +177,13 @@ td .sub { display: block; color: var(--faint); font-size: var(--t-sm); }
 .site-table td.first, .site-table td.mono { overflow-wrap: anywhere; }
 td.actions { text-align: right; white-space: nowrap; width: 1%; }
 td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
+.project-name { display: flex; align-items: flex-start; gap: 6px; overflow-wrap: anywhere; }
+.project-expand[aria-expanded="true"] .icon { rotate: 90deg; }
+.project-detail > td { padding-top: 4px; }
+.project-table > tbody > .project-detail:hover > td { background: transparent; }
+.container-table .health-unhealthy { color: var(--bad); }
+.project-delete-directory { display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--warn-soft); }
+.project-delete-directory > code { overflow-wrap: anywhere; }
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: var(--t-sm); font-weight: 500; white-space: nowrap; }
 .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .pill.ok { background: var(--ok-soft); color: var(--ok); }
@@ -318,4 +325,9 @@ td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
   .rtable td[data-label] { display: flex; gap: 12px; align-items: baseline; font-size: var(--t-sm); }
   .rtable td[data-label]::before { content: attr(data-label); flex: 0 0 64px; color: var(--faint); }
   .rtable td.actions { position: absolute; top: 12px; right: 12px; width: auto; }
+  .project-table td.first { padding-right: 0; }
+  .project-table td.actions { position: static; padding-top: 8px; text-align: left; }
+  .project-table td.actions .row-act { flex-wrap: wrap; }
+  .project-table > tbody > .project-detail { padding-top: 0; }
+  .container-table td { padding: 2px 0; white-space: normal; overflow-wrap: anywhere; }
 }

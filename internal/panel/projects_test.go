@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -148,6 +149,10 @@ func TestProjectSaveAndSecrets(t *testing.T) {
 	if strings.Contains(list.Body.String(), "secret-value") || strings.Contains(list.Body.String(), "TOKEN") {
 		t.Fatal("列表泄露环境变量")
 	}
+	var listed []Project
+	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil || len(listed) != 1 || listed[0].Directory != filepath.Join(root, "data/projects", projectID) {
+		t.Fatalf("列表未返回实际项目目录：%s", list.Body.String())
+	}
 	badConfig := `{"name":"错误配置","compose":"bad","environment":"TOKEN=secret-value"}`
 	bad := call(a, "POST", "/api/v1/projects", badConfig, cookie)
 	if bad.Code != 400 || strings.Contains(bad.Body.String(), "secret-value") {
@@ -194,6 +199,58 @@ func TestProjectCreateKeepsProjectWhenDeploymentCannotStart(t *testing.T) {
 	}
 }
 
+func TestProjectContainerLogs(t *testing.T) {
+	a, _ := testApp(t)
+	const firstID = "0123456789aa"
+	const secondID = "0123456789bb"
+	const otherID = "0123456789cc"
+	for _, projectID := range []string{"replicas", "other"} {
+		if _, err := a.DB.ExecContext(t.Context(), "INSERT INTO projects VALUES(?,?,?,?,?)", projectID, "容器日志测试", "services: {}", "TOKEN=secret-value", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var failLogs bool
+	a.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "docker" && len(args) >= 9 && slices.Equal(args[9:], []string{"ps", "--all", "--format", "json"}) {
+			if args[2] == "lpanel-other" {
+				return fmt.Appendf(nil, `[{"ID":%q,"Service":"web","Name":"other-web-1"}]`, otherID), nil
+			}
+			return fmt.Appendf(nil, `[{"ID":%q,"Service":"web","Name":"web-1"},{"ID":%q,"Service":"web","Name":"web-2"}]`, firstID, secondID), nil
+		}
+		if name == "docker" && len(args) == 5 && slices.Equal(args[:4], []string{"logs", "--tail", "200", "--"}) {
+			if failLogs {
+				return []byte("日志驱动错误 secret-value"), errors.New("读取失败")
+			}
+			return []byte(args[4] + " secret-value"), nil
+		}
+		return nil, fmt.Errorf("意外的命令：%s %v", name, args)
+	}
+
+	const path = "/api/v1/projects/replicas/containers/"
+	if w := call(a, "GET", path+firstID+"/logs", "", nil); w.Code != http.StatusUnauthorized {
+		t.Fatalf("读取容器日志未验证会话：%s", w.Body.String())
+	}
+	login := call(a, "POST", "/api/v1/auth/login", `{"username":"管理员","password":"test-password"}`, nil)
+	cookie := login.Result().Cookies()[0]
+	for _, id := range []string{firstID, secondID} {
+		w := call(a, "GET", path+id+"/logs", "", cookie)
+		var result struct {
+			Log string `json:"log"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || w.Code != http.StatusOK || result.Log != id+" [已隐藏]" {
+			t.Fatalf("日志没有对应所选容器或脱敏失败：%s", w.Body.String())
+		}
+	}
+	if w := call(a, "GET", path+otherID+"/logs", "", cookie); w.Code != http.StatusNotFound {
+		t.Fatalf("跨项目读取日志未拒绝：%s", w.Body.String())
+	}
+	failLogs = true
+	w := call(a, "GET", path+firstID+"/logs", "", cookie)
+	if w.Code != http.StatusBadGateway || strings.Contains(w.Body.String(), "secret-value") || !strings.Contains(w.Body.String(), "日志驱动错误") {
+		t.Fatalf("日志错误提示或脱敏失败：%s", w.Body.String())
+	}
+}
+
 func TestProjectDeletePreservesVolumesAndStopBindings(t *testing.T) {
 	a, root := testApp(t)
 	var count int
@@ -224,14 +281,14 @@ func TestProjectDeletePreservesVolumesAndStopBindings(t *testing.T) {
 		commands = append(commands, name+" "+strings.Join(args, " "))
 		return nil, nil
 	}
-	if _, err = a.runProjectAction(context.Background(), p, "stop"); err != nil {
+	if _, err = a.runProjectAction(context.Background(), p, "stop", false); err != nil {
 		t.Fatal(err)
 	}
 	bindings, err := a.ListBindings(context.Background())
 	if err != nil || len(bindings) != 1 {
 		t.Fatal("停止项目删除了绑定")
 	}
-	if _, err = a.runProjectAction(context.Background(), p, "delete"); err != nil {
+	if _, err = a.runProjectAction(context.Background(), p, "delete", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = os.Stat(path); err != nil {
@@ -247,6 +304,115 @@ func TestProjectDeletePreservesVolumesAndStopBindings(t *testing.T) {
 		t.Fatal("删除未清理绑定")
 	}
 }
+
+func TestProjectDeleteFiles(t *testing.T) {
+	for _, scenario := range []struct {
+		name                    string
+		removeFiles, failDocker bool
+		symlink, keepDir        bool
+	}{
+		{name: "默认保留", keepDir: true},
+		{name: "删除项目目录", removeFiles: true},
+		{name: "容器清理失败", removeFiles: true, failDocker: true, keepDir: true},
+		{name: "目录链接到外部位置", removeFiles: true, symlink: true, keepDir: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			a, root := testApp(t)
+			const id = "cleanup"
+			if _, err := a.DB.ExecContext(t.Context(), "INSERT INTO projects VALUES(?,?,?,?,?)", id, "清理测试", "services: {}", "", ""); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(root, "data/projects", id)
+			outside := filepath.Join(root, "保留数据")
+			relativeData := filepath.Join(dir, "data")
+			if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(outside, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if scenario.symlink {
+				if err := os.Symlink(outside, dir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.MkdirAll(relativeData, 0700); err != nil {
+				t.Fatal(err)
+			}
+			outsideFile := filepath.Join(outside, "目录外数据")
+			if err := os.WriteFile(outsideFile, []byte("保留"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(relativeData, "目录内数据"), []byte("相对路径挂载数据"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			a.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				if name != "docker" || len(args) < 9 || !slices.Equal(args[9:], []string{"down", "--remove-orphans"}) {
+					return nil, fmt.Errorf("意外的命令：%s %v", name, args)
+				}
+				if scenario.failDocker {
+					return nil, errors.New("容器移除失败")
+				}
+				return nil, nil
+			}
+
+			login := call(a, "POST", "/api/v1/auth/login", `{"username":"管理员","password":"test-password"}`, nil)
+			cookie := login.Result().Cookies()[0]
+			path := "/api/v1/projects/" + id + "/actions/delete"
+			if scenario.removeFiles {
+				path += "?remove_files=true"
+			}
+			w := call(a, "POST", path, "", cookie)
+			var operation Operation
+			if err := json.Unmarshal(w.Body.Bytes(), &operation); err != nil || w.Code != http.StatusAccepted || operation.ID == "" {
+				t.Fatalf("删除操作未启动：%s", w.Body.String())
+			}
+			for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+				w = call(a, "GET", "/api/v1/operations/"+operation.ID, "", cookie)
+				if err := json.Unmarshal(w.Body.Bytes(), &operation); err != nil || w.Code != http.StatusOK {
+					t.Fatalf("未能读取删除状态：%s", w.Body.String())
+				}
+				if operation.Status != "running" {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			switch {
+			case scenario.failDocker:
+				if operation.Status != "failed" || !strings.Contains(operation.Error, "容器移除失败") {
+					t.Fatalf("容器清理失败未报告：%+v", operation)
+				}
+			case scenario.symlink:
+				if operation.Status != "failed" || !strings.Contains(operation.Error, "普通目录") {
+					t.Fatalf("目录链接未被拒绝：%+v", operation)
+				}
+			default:
+				if operation.Status != "success" {
+					t.Fatalf("删除失败：%+v", operation)
+				}
+			}
+			if scenario.keepDir {
+				if _, err := os.Stat(filepath.Join(relativeData, "目录内数据")); err != nil {
+					t.Fatalf("应保留的项目文件丢失：%v", err)
+				}
+			} else if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("项目目录未删除：%s，错误：%v", dir, err)
+			}
+			if file, err := os.ReadFile(outsideFile); err != nil || string(file) != "保留" {
+				t.Fatalf("项目目录外的数据有误：%q，错误：%v", file, err)
+			}
+			w = call(a, "GET", "/api/v1/projects/"+id, "", cookie)
+			want := http.StatusNotFound
+			if operation.Status == "failed" {
+				want = http.StatusOK
+			}
+			if w.Code != want {
+				t.Fatalf("项目记录状态有误：%s", w.Body.String())
+			}
+		})
+	}
+}
+
 func TestProjectRuntimeRefreshesPublishedPort(t *testing.T) {
 	a, root := testApp(t)
 	p := Project{ID: "refresh", Name: "测试"}
@@ -262,7 +428,7 @@ func TestProjectRuntimeRefreshesPublishedPort(t *testing.T) {
 		}
 		return nil, nil
 	}
-	if _, err := a.runProjectAction(context.Background(), p, "deploy"); err != nil {
+	if _, err := a.runProjectAction(context.Background(), p, "deploy", false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := a.binding(context.Background(), b.ID)

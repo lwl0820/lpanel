@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -26,6 +27,7 @@ services:
         host_ip: 127.0.0.1
     volumes:
       - retained:/var/cache/nginx
+      - ./data:/srv/lpanel-test
 volumes:
   retained:
 `}
@@ -37,6 +39,13 @@ volumes:
 	if len(ports) != 1 || ports[0].Published != "" {
 		t.Fatalf("动态端口解析错误：%+v", ports)
 	}
+	localData := filepath.Join(dir, "data")
+	if err := os.Mkdir(localData, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localData, "data.txt"), []byte("相对路径挂载数据"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	_, err = a.DB.Exec("INSERT INTO projects VALUES(?,?,?,?,?)", p.ID, p.Name, p.Compose, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +54,7 @@ volumes:
 		_, _ = a.projectCommand(context.Background(), p, "down", "--volumes")
 		_, _ = a.Command(context.Background(), "docker", "volume", "rm", "lpanel-"+p.ID+"_retained")
 	}()
-	if _, err = a.runProjectAction(ctx, p, "deploy"); err != nil {
+	if _, err = a.runProjectAction(ctx, p, "deploy", false); err != nil {
 		t.Fatal(err)
 	}
 	items, err := a.ProjectStatus(ctx, p)
@@ -65,7 +74,7 @@ volumes:
 	if response.StatusCode != 200 {
 		t.Fatalf("应用状态 %d", response.StatusCode)
 	}
-	if _, err = a.runProjectAction(ctx, p, "stop"); err != nil {
+	if _, err = a.runProjectAction(ctx, p, "stop", false); err != nil {
 		t.Fatal(err)
 	}
 	items, err = a.ProjectStatus(ctx, p)
@@ -75,11 +84,14 @@ volumes:
 	if _, err = projectUpstream(items, "web", 80, "http"); err == nil {
 		t.Fatal("停止后依然被视为运行")
 	}
-	if _, err = a.runProjectAction(ctx, p, "start"); err != nil {
+	if _, err = a.runProjectAction(ctx, p, "start", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = a.runProjectAction(ctx, p, "delete"); err != nil {
+	if _, err = a.runProjectAction(ctx, p, "delete", true); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("删除后项目目录仍存在：%s，错误：%v", dir, err)
 	}
 	if _, err = a.Command(ctx, "docker", "volume", "inspect", "lpanel-"+p.ID+"_retained"); err != nil {
 		t.Fatal("删除项目后数据卷不存在：", err)

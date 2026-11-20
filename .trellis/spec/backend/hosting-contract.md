@@ -10,6 +10,8 @@
 - SaveBinding(ctx, Binding)、DeleteBinding(ctx, id)、ApplyNginx(ctx)、RequestCertificate(ctx, id)、RenewCertificates(ctx) 是项目、网站和面板复用的边界。需指定账户时使用 SaveBindingWithAccount 和 RequestCertificateWithAccount。
 - SaveSite(ctx, Site)、DeleteSite(ctx, id) 同步网站记录和关联绑定。
 - `POST /api/v1/projects` 和 `PUT /api/v1/projects/{id}` 接收 `name`、`compose` 和 `environment`。两者通过配置校验并保存后均提交 `project_deploy` 后台操作。响应为 `200`，项目字段在顶层，并附带 `operation`。
+- 项目响应的 `directory` 由服务端按项目 ID 计算。`GET /api/v1/projects/{id}/status` 返回容器列表，含 Docker 的 `ID`。`GET /api/v1/projects/{id}/containers/{containerID}/logs` 查询项目中的指定容器，返回 `{"log":"…"}`。项目汇总日志仍可通过 `GET /api/v1/projects/{id}/logs` 获取。
+- `POST /api/v1/projects/{id}/actions/delete` 返回 `202` 和后台操作。带 `?remove_files=true` 时同时清理该项目的目录，省略该参数时保留目录。
 - `POST /api/v1/sites` 接收 `hostnames` 字符串数组、`identifier`、`note`、`directory`、`spa` 和可选的 `auto_certificate`、`acme_account_id`。成功返回 `201`、顶层网站字段、`bindings` 数组及可选的 `operation` 或 `certificate_error`。`PUT /api/v1/sites/{id}` 保存 `identifier`、`note`、`directory` 和 `spa`。单独绑定域名与手动申请入口继续接受可选 `acme_account_id`。
 - `GET /api/v1/acme/accounts` 返回 `accounts`、`providers` 和 `default_account_id`。在该路径通过 POST 新增账户，通过 PUT 或 DELETE 操作 `/{id}` 下的账户。输入使用 `name`、`provider`、`email`、`agree_tos` 和可选的 `eab_kid`、`eab_hmac_key`。账户响应包含 `provider_name` 与 `needs_eab`。
 - UpgradeWorker(ctx, root, version, operationID, releaseDir) 在独立 systemd service 中执行版本切换。
@@ -31,7 +33,9 @@ ZeroSSL 和 Google Cloud Public CA 在注册时通过 EAB 绑定账户。ZeroSSL
 
 静态网站支持 `*.example.com` 形式的通配符 HTTP 绑定。普通域名可以和通配符同时绑定并自动申请 HTTPS。自动签发由一个后台操作逐个处理普通域名，每个域名独立保存签发结果。
 
-Compose config 输出的 published 是字符串，可能缺失或为动态端口/范围；expose 是含协议/范围的字符串数组。ps 返回 JSON Lines 或空内容，项目代码也兼容数组。仅 expose 不生成不可达上游，UDP 不作为网站代理。项目列表不返回环境变量秘密，编辑详情才返回配置。
+Compose config 输出的 published 是字符串，可能缺失或为动态端口/范围；expose 是含协议/范围的字符串数组。ps 返回 JSON Lines 或空内容，项目代码也兼容数组。仅 expose 不生成不可达上游，UDP 不作为网站代理。项目列表不返回环境变量秘密，编辑详情才返回配置。单容器日志依照项目容器列表校验 ID，最多读取最近 200 行，按现有规则脱敏。
+
+勾选删除文件时，清理范围为 `Root/data/projects/<ID>`，包括该目录内的 `compose.yaml`、`.env` 和相对路径挂载数据。Docker 命名卷、镜像及目录外的数据保留。
 
 Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /.lpanel/config 返回本次标识。重载后用候选 HTTP/HTTPS 地址、Host/SNI 从本机回读匹配才提交；NginxProbe 是测试可替换的实际运行边界。仅本机探针接受测试 CA，不影响用户访问的证书验证；公开验证文件为 Root/acme-webroot/.well-known/acme-challenge，私钥为 Root/data/acme。申请和续期必须使用同一组 config/work/log 目录。Certbot 仅申请和续期，不自动改写站点。
 
@@ -54,6 +58,9 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 | Compose 校验失败或 Docker 不可用 | 显示实际错误，不把保存配置当成部署成功 |
 | 项目已保存，部署任务无法启动 | 返回 `200`、项目字段和 `deployment_error`，可打开「编辑配置」并重新保存以重试 |
 | 后台部署执行失败 | 操作状态为 `failed`，保留项目记录与配置 |
+| 查不到所选容器或容器不属于项目 | 单容器日志返回 `404` |
+| 项目目录或父数据目录为符号链接，或目录内有宿主机挂载点 | 勾选文件清理的删除操作失败，并提示具体位置 |
+| Docker 项目清理、解除域名绑定或文件清理失败 | 后台操作标记失败。Compose 或绑定清理失败时保留项目文件，文件清理失败时保留项目记录 |
 | 网站目录无效 | 拒绝保存，不递归修改用户目录权限 |
 | 网站标识已存在 | 提示更换网站标识 |
 | 默认目录已存在 | 提示修改标识或指定已有的网页目录，保留目录中的数据 |
@@ -83,13 +90,17 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 建站时按主机名建立 HTTP 入口。勾选证书后逐个申请普通域名的证书，个别签发失败后其他普通域名仍继续申请。编辑仅修改备注或标识时无需重载 Nginx。
 安装：完整参数支持关闭标准输入。提供账号和端口时，脚本仍会按需询问密码与域名。选择申请证书但域名为空时在安装前报错。
 账户：无证书账户可删除。删除默认账户后选最早添加的剩余账户，删空后等待下一次添加。手动改选账户签发成功后，当前证书切换到新账户；失败时继续使用原证书。
-失败：无效 Nginx 配置回退旧文件；网站保存/删除失败恢复旧记录；删除项目不使用 --volumes，删除网站不删除内容目录。
+失败：无效 Nginx 配置回退旧文件；网站保存/删除失败恢复旧记录；删除网站不删除内容目录。
+
+删除项目沿用 `down --remove-orphans`，保留命名卷。勾选删除文件时，先确认目录边界，然后移除 Docker 资源和绑定，最后清理目录与项目记录。
 卸载：默认路径可在保留业务容器的情况下停用面板。清理选项在最终确认前列出项目和目录，重复执行已完成的卸载时提示无需操作。
 
 ## 6. 必需测试
 
 项目测试覆盖短/长端口、变量、expose、JSONL、实际端口更新和保留卷；LPANEL_DOCKER_INTEGRATION=1 开启真实 Docker 测试。域名测试覆盖配置标识匹配、重载 0 但配置未生效、探针超时、原 HTTP/HTTPS 保留、Host/SNI 和 CLI Open 不打断服务任务；网站测试覆盖目录/绑定同步、失败恢复和内容保留。升级测试覆盖语义版本、附件、校验下载、成功/失败回退及鉴权。tests/install-smoke.sh 在一次性 Debian 容器中验证安装分支，系统服务和包管理使用替身，不能等同真实服务器验收。
 项目测试验证新建和更新均返回可查询的部署操作，部署使用刚保存的配置，校验失败不启动部署。
+
+单容器日志测试覆盖同服务副本隔离、跨项目容器 ID 和日志脱敏。文件清理测试覆盖默认保留、勾选删除、数据边界和 Compose 失败时的记录保留。真实 Docker 用例核对同时清理项目目录后命名卷仍存在。
 
 `bash tests/uninstall-smoke.sh` 在仓库 `.tmp` 中用实际文件和 SQLite 验证取消、默认保留、选中项目清理、失败恢复和重复执行。Docker、Nginx、systemd 使用命令替身。
 
