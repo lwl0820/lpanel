@@ -3,7 +3,7 @@
   "name": "nginx-domain-certificates",
   "title": "Nginx 域名绑定与自动证书",
   "description": "统一管理面板、Compose 应用和静态网站的域名及 Let’s Encrypt 证书",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "lwl0820",
   "assignee": "lwl0820",
   "createdAt": "2026-10-29",
-  "completedAt": null,
+  "completedAt": "2026-11-20",
   "branch": "codex/server-management-panel",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "7cfe8977376d3da1b422dcf73f186bb4bbae9a85",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -23,6 +23,7 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "implementation_status": "已通过本地 ACME HTTP-01、真实 Certbot/systemd 续期、失败保留 HTTPS 和自定义端口验证，待公网签发与续期。"
+    "implementation_status": "真实 Certbot 完成本地 HTTP-01 签发与续期，验证新证书生效、续期失败保留 HTTPS 和自定义端口。公网签发与续期交由人工验收。",
+    "manual_acceptance": "docs/validation.md#人工验收清单"
   }
 }

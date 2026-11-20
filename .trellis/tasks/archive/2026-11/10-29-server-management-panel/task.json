@@ -3,7 +3,7 @@
   "name": "server-management-panel",
   "title": "使用 Go 构建服务器管理面板",
   "description": "使用 Go、Vue 3 和 Element Plus 构建支持 Nginx、自动证书、Compose 部署、静态网站、版本升级及一键安装的服务器管理面板",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "lwl0820",
   "assignee": "lwl0820",
   "createdAt": "2026-10-29",
-  "completedAt": null,
+  "completedAt": "2026-11-20",
   "branch": "codex/server-management-panel",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "7cfe8977376d3da1b422dcf73f186bb4bbae9a85",
   "pr_url": null,
   "subtasks": [],
   "children": [
@@ -30,6 +30,7 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "implementation_status": "代码质量门通过，提交已获批准，相应外部验收待完成"
+    "implementation_status": "首版六个模块已实现并完成本地验收。依赖公网及缺少目标环境的项目由维护者人工验收。",
+    "manual_acceptance": "docs/validation.md#人工验收清单"
   }
 }

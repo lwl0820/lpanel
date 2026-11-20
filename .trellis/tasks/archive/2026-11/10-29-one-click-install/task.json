@@ -3,7 +3,7 @@
   "name": "one-click-install",
   "title": "一键安装与面板 HTTPS 初始化",
   "description": "提供安装脚本，交互配置管理员、密码、端口及可选域名和证书",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "lwl0820",
   "assignee": "lwl0820",
   "createdAt": "2026-10-29",
-  "completedAt": null,
+  "completedAt": "2026-11-20",
   "branch": "codex/server-management-panel",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "7cfe8977376d3da1b422dcf73f186bb4bbae9a85",
   "pr_url": null,
   "subtasks": [],
   "children": [
@@ -26,6 +26,7 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "implementation_status": "代码质量门通过，提交已获批准，相应外部验收待完成"
+    "implementation_status": "Debian 12 amd64 隔离机通过 v0.1.1 正式发行包在线安装、登录、重复安装保护与重启验证。公网 HTTPS 安装、其余系统与 arm64 实机交由人工验收。",
+    "manual_acceptance": "docs/validation.md#人工验收清单"
   }
 }

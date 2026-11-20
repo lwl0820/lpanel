@@ -1,6 +1,6 @@
 # Docker Compose 项目部署技术设计
 
-以[总任务设计](../../../10-29-server-management-panel/design.md)为跨模块契约，本文件明确子任务负责范围。
+以[总任务设计](../10-29-server-management-panel/design.md)为跨模块契约，本文件明确子任务负责范围。
 
 ## 配置与解析
 项目目录持久化原始 compose.yaml 和 .env。调用 docker compose config --format json 验证并规范化，不自己实现 YAML、变量替换或端口短格式解析。扫描返回服务、来源、协议、容器端口和发布地址；前端类型对应同一响应结构。
