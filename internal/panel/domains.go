@@ -14,10 +14,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -49,6 +51,15 @@ var (
 
 func normalizeBindingDomain(domain, kind string) (string, error) {
 	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	if kind == "panel" {
+		address := domain
+		if strings.HasPrefix(address, "[") && strings.HasSuffix(address, "]") {
+			address = address[1 : len(address)-1]
+		}
+		if ip, err := netip.ParseAddr(address); err == nil && ip.Zone() == "" {
+			return ip.Unmap().String(), nil
+		}
+	}
 	name := domain
 	if kind == "site" {
 		name = strings.TrimPrefix(domain, "*.")
@@ -56,6 +67,9 @@ func normalizeBindingDomain(domain, kind string) (string, error) {
 	if len(domain) > 253 || !ordinaryDomain.MatchString(name) {
 		if kind == "site" {
 			return "", errors.New("请输入有效的域名，通配符只能用于开头，例如 *.example.com")
+		}
+		if kind == "panel" {
+			return "", errors.New("请输入有效的域名或 IP 地址")
 		}
 		return "", errors.New("请输入有效的普通域名")
 	}
@@ -316,6 +330,10 @@ func (a *App) DeleteBinding(ctx context.Context, id string) error {
 	return err
 }
 func (a *App) BindingURL(b Binding) string {
+	return bindingURL(b, a.currentConfig().PanelPort)
+}
+
+func bindingURL(b Binding, panelPort int) string {
 	if strings.HasPrefix(b.Domain, "*.") {
 		return ""
 	}
@@ -324,7 +342,7 @@ func (a *App) BindingURL(b Binding) string {
 		scheme = "https"
 	}
 	if b.Kind == "panel" {
-		return fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(b.Domain, fmt.Sprint(a.currentConfig().PanelPort)))
+		return scheme + "://" + net.JoinHostPort(b.Domain, fmt.Sprint(panelPort))
 	}
 	return scheme + "://" + b.Domain
 }
@@ -333,7 +351,7 @@ func (a *App) ApplyNginx(ctx context.Context) error {
 	defer a.domainsMu.Unlock()
 	return a.applyNginx(ctx)
 }
-func (a *App) renderNginx(items []Binding, marker string, config Config) string {
+func (a *App) renderNginx(items []Binding, marker string, config Config, challengeHost string) string {
 	var out strings.Builder
 	acme := fmt.Sprintf("location ^~ /.well-known/acme-challenge/ { root %q; default_type text/plain; }\n", filepath.Join(a.Root, "acme-webroot"))
 	proxy := fmt.Sprintf("proxy_pass http://%s; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-LPanel-Proxy 1;", config.Listen)
@@ -349,13 +367,23 @@ func (a *App) renderNginx(items []Binding, marker string, config Config) string 
 	all := append([]Binding{panel}, others...)
 	for _, b := range all {
 		port := 80
+		listenPrefix, serverName := "", b.Domain
+		ip, _ := netip.ParseAddr(b.Domain)
 		if b.Kind == "panel" {
 			port = config.PanelPort
+			if ip.Is6() {
+				listenPrefix, serverName = "[::]:", "["+b.Domain+"]"
+			}
 		}
 		tls := b.CertificateStatus == "enabled"
+		autoIPv6 := b.Kind == "panel" && b.Domain == "_" && slices.ContainsFunc(serverIPs(), netip.Addr.Is6)
 		if tls || b.Kind == "panel" && port != 80 {
-			destination := strings.ReplaceAll(a.BindingURL(b), "://_:", "://$host:")
-			fmt.Fprintf(&out, "server { listen 80; server_name %s; %s", b.Domain, acme)
+			destination := strings.ReplaceAll(bindingURL(b, config.PanelPort), "://_:", "://$host:")
+			fmt.Fprintf(&out, "server { listen %s80; ", listenPrefix)
+			if autoIPv6 {
+				out.WriteString("listen [::]:80; ")
+			}
+			fmt.Fprintf(&out, "server_name %s; %s", serverName, acme)
 			if b.Kind == "panel" && config.LoginPath != "" {
 				fmt.Fprintf(&out, "location / { %s proxy_set_header X-LPanel-Redirect %s; } }\n", proxy, destination)
 			} else {
@@ -365,11 +393,19 @@ func (a *App) renderNginx(items []Binding, marker string, config Config) string 
 		if tls && b.Kind != "panel" {
 			port = 443
 		}
-		fmt.Fprintf(&out, "server { listen %d", port)
+		fmt.Fprintf(&out, "server { listen %s%d", listenPrefix, port)
 		if tls {
 			out.WriteString(" ssl")
+			if b.Kind == "panel" && ip.IsValid() {
+				// 浏览器打开 IP 地址时不会发送域名 SNI。
+				out.WriteString(" default_server")
+			}
 		}
-		fmt.Fprintf(&out, "; server_name %s;\n", b.Domain)
+		out.WriteString("; ")
+		if autoIPv6 {
+			fmt.Fprintf(&out, "listen [::]:%d; ", port)
+		}
+		fmt.Fprintf(&out, "server_name %s;\n", serverName)
 		if tls {
 			dir := a.certificateDir(b.CertificateAccountID, b.Domain)
 			fmt.Fprintf(&out, "ssl_certificate %q; ssl_certificate_key %q;\n", filepath.Join(dir, "fullchain.pem"), filepath.Join(dir, "privkey.pem"))
@@ -379,7 +415,7 @@ func (a *App) renderNginx(items []Binding, marker string, config Config) string 
 		case "panel":
 			out.WriteString("location = /.lpanel/config { default_type text/plain; ")
 			if config.LoginPath != "" {
-				out.WriteString("if ($remote_addr != 127.0.0.1) { return 404; } ")
+				fmt.Fprintf(&out, "if ($remote_addr != %s) { return 404; } ", panelLoopback(b.Domain))
 			}
 			fmt.Fprintf(&out, "return 200 %q; }\n", marker)
 			if config.LoginPath != "" {
@@ -400,6 +436,13 @@ func (a *App) renderNginx(items []Binding, marker string, config Config) string 
 		}
 		out.WriteString("}\n")
 	}
+	if challengeHost != "" {
+		listen, name := "80", challengeHost
+		if ip, _ := netip.ParseAddr(challengeHost); ip.Is6() {
+			listen, name = "[::]:80", "["+challengeHost+"]"
+		}
+		fmt.Fprintf(&out, "server { listen %s; server_name %s; %s location / { return 404; } }\n", listen, name, acme)
+	}
 	return "# 本文件由 LPanel 管理\n" + out.String()
 }
 func (a *App) applyNginx(ctx context.Context) error {
@@ -411,10 +454,14 @@ func (a *App) applyNginxConfig(ctx context.Context, config Config) error {
 	if err != nil {
 		return err
 	}
-	if err = os.MkdirAll(filepath.Join(a.Root, "acme-webroot/.well-known/acme-challenge"), 0755); err != nil {
+	return a.applyNginxBindings(ctx, config, items, "")
+}
+
+func (a *App) applyNginxBindings(ctx context.Context, config Config, items []Binding, challengeHost string) error {
+	if err := os.MkdirAll(filepath.Join(a.Root, "acme-webroot/.well-known/acme-challenge"), 0755); err != nil {
 		return err
 	}
-	if err = os.MkdirAll(config.NginxConfigDir, 0755); err != nil {
+	if err := os.MkdirAll(config.NginxConfigDir, 0755); err != nil {
 		return err
 	}
 	path := filepath.Join(config.NginxConfigDir, "lpanel.conf")
@@ -423,7 +470,7 @@ func (a *App) applyNginxConfig(ctx context.Context, config Config) error {
 		return readErr
 	}
 	raw := make([]byte, 16)
-	if _, err = rand.Read(raw); err != nil {
+	if _, err := rand.Read(raw); err != nil {
 		return err
 	}
 	marker := hex.EncodeToString(raw)
@@ -435,7 +482,7 @@ func (a *App) applyNginxConfig(ctx context.Context, config Config) error {
 			config.HTTPS = b.CertificateStatus == "enabled"
 		}
 	}
-	if err = os.WriteFile(path, []byte(a.renderNginx(items, marker, config)), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(a.renderNginx(items, marker, config, challengeHost)), 0644); err != nil {
 		return err
 	}
 	restore := func() error {
@@ -466,23 +513,13 @@ func (a *App) applyNginxConfig(ctx context.Context, config Config) error {
 		return fmt.Errorf("Nginx 配置检查失败：%s：%w", output, e)
 	}
 	if output, e := a.Command(ctx, "systemctl", "reload", "nginx"); e != nil {
-		restoreErr := rollback()
-		return fmt.Errorf("Nginx 重载失败：%s：%w（恢复结果：%v）", output, e, restoreErr)
+		return errors.Join(fmt.Errorf("Nginx 重载失败：%s：%w", output, e), rollback())
 	}
-	scheme := "http"
-	if config.HTTPS {
-		scheme = "https"
+	address, host := localPanelEndpoint(config, "/.lpanel/config")
+	if err := a.NginxProbe(ctx, address, host, marker); err != nil {
+		return errors.Join(fmt.Errorf("Nginx 配置未确认生效：%w", err), rollback())
 	}
-	host := config.PanelDomain
-	if host == "" {
-		host = "localhost"
-	}
-	address := scheme + "://" + net.JoinHostPort("127.0.0.1", fmt.Sprint(config.PanelPort)) + "/.lpanel/config"
-	if err = a.NginxProbe(ctx, address, host, marker); err != nil {
-		restoreErr := rollback()
-		return fmt.Errorf("Nginx 配置未确认生效：%w（恢复结果：%v）", err, restoreErr)
-	}
-	if err = SaveConfig(a.Root, config); err != nil {
+	if err := SaveConfig(a.Root, config); err != nil {
 		return errors.Join(fmt.Errorf("保存面板配置失败：%w", err), rollback())
 	}
 	a.setConfig(config)
@@ -502,12 +539,38 @@ func (a *App) RequestCertificateWithAccount(ctx context.Context, id, accountID s
 	if strings.HasPrefix(b.Domain, "*.") {
 		return errWildcardCertificate
 	}
+	if b.Kind == "panel" && a.currentConfig().PanelPort == 80 {
+		return fmt.Errorf("面板使用 HTTPS 时不能占用证书验证端口 80")
+	}
+	if ip, _ := netip.ParseAddr(b.Domain); b.Kind == "panel" && ip.IsValid() {
+		previous := b
+		if accountID != "" {
+			account, err := a.certificateAccount(ctx, accountID, "")
+			if err != nil {
+				return err
+			}
+			if account.Provider != "letsencrypt" || account.server != letsEncryptServer {
+				return errors.New("IP 证书请选择 Let’s Encrypt 账户")
+			}
+			b.CertificateAccountID = account.ID
+		}
+		b, err = a.issuePanelIPCertificate(ctx, b, false)
+		if err != nil {
+			return err
+		}
+		if err = a.storeBinding(ctx, b); err != nil {
+			return err
+		}
+		if err = a.applyNginx(ctx); err != nil {
+			restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			return errors.Join(err, a.storeBinding(restoreCtx, previous))
+		}
+		return nil
+	}
 	account, err := a.certificateAccount(ctx, accountID, b.CertificateAccountID)
 	if err != nil {
 		return err
-	}
-	if b.Kind == "panel" && a.Config.PanelPort == 80 {
-		return fmt.Errorf("面板使用 HTTPS 时不能占用证书验证端口 80")
 	}
 	previous := b
 	b.AutoCertificate = true
@@ -517,14 +580,7 @@ func (a *App) RequestCertificateWithAccount(ctx context.Context, id, accountID s
 	if err = a.storeBinding(ctx, b); err != nil {
 		return err
 	}
-	args := []string{"certonly", "--non-interactive", "--agree-tos", "--webroot", "-w", filepath.Join(a.Root, "acme-webroot"), "--cert-name", b.Domain, "-d", b.Domain}
-	args = append(args, a.certbotDirs(account.ID)...)
-	args = append(args, "--logs-dir", filepath.Join(a.Root, "data/logs/acme", account.ID), "--server", account.server)
-	args = append(args, certbotContact(account.Email)...)
-	output, err := a.Command(ctx, "certbot", args...)
-	if err == nil {
-		b.ExpiresAt, err = a.certificateExpiry(account.ID, b.Domain)
-	}
+	b.ExpiresAt, err = a.issueDomainCertificate(ctx, b.Domain, account)
 	if err == nil {
 		b.CertificateStatus = "enabled"
 		b.CertificateAccountID = account.ID
@@ -543,13 +599,24 @@ func (a *App) RequestCertificateWithAccount(ctx context.Context, id, accountID s
 			b.CertificateAccountID = previous.CertificateAccountID
 			b.ExpiresAt = previous.ExpiresAt
 		}
-		b.CertificateError = fmt.Sprintf("申请或启用证书失败：%s：%v", strings.TrimSpace(string(output)), err)
+		b.CertificateError = fmt.Sprintf("申请或启用证书失败：%v", err)
 		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = a.storeBinding(rollbackCtx, b)
 		return fmt.Errorf("%s", b.CertificateError)
 	}
 	return nil
+}
+
+func (a *App) issueDomainCertificate(ctx context.Context, domain string, account ACMEAccount) (string, error) {
+	args := []string{"certonly", "--non-interactive", "--agree-tos", "--webroot", "-w", filepath.Join(a.Root, "acme-webroot"), "--cert-name", domain, "-d", domain}
+	args = append(args, a.certbotDirs(account.ID)...)
+	args = append(args, "--logs-dir", filepath.Join(a.Root, "data/logs/acme", account.ID), "--server", account.server)
+	args = append(args, certbotContact(account.Email)...)
+	if output, err := a.Command(ctx, "certbot", args...); err != nil {
+		return "", fmt.Errorf("%s：%w", strings.TrimSpace(string(output)), err)
+	}
+	return a.certificateExpiry(account.ID, domain)
 }
 
 func (a *App) certificateExpiry(accountID, domain string) (string, error) {
@@ -580,6 +647,12 @@ func (a *App) RenewCertificates(ctx context.Context) error {
 		if b.CertificateStatus != "enabled" {
 			continue
 		}
+		if ip, _ := netip.ParseAddr(b.Domain); b.Kind == "panel" && ip.IsValid() {
+			if err := a.renewPanelIPCertificate(ctx, b); err != nil {
+				failures = append(failures, fmt.Errorf("%s 证书续期失败：%w", b.Domain, err))
+			}
+			continue
+		}
 		args := []string{"renew", "--non-interactive", "--cert-name", b.Domain}
 		args = append(args, a.certbotDirs(b.CertificateAccountID)...)
 		args = append(args, "--logs-dir", filepath.Join(a.Root, "data/logs/acme", b.CertificateAccountID),
@@ -591,10 +664,7 @@ func (a *App) RenewCertificates(ctx context.Context) error {
 		}
 		expiresAt, err := a.certificateExpiry(b.CertificateAccountID, b.Domain)
 		if err == nil {
-			// 定时器独立运行，只更新仍使用该证书的绑定。
-			_, err = a.DB.ExecContext(ctx, `UPDATE bindings SET payload=json_set(payload,'$.expires_at',?)
-				WHERE id=? AND domain=? AND json_extract(payload,'$.certificate_status')='enabled'
-				AND COALESCE(json_extract(payload,'$.certificate_account_id'),'')=?`, expiresAt, b.ID, b.Domain, b.CertificateAccountID)
+			err = a.updateCertificateExpiry(ctx, b, expiresAt)
 		}
 		if err != nil {
 			failures = append(failures, fmt.Errorf("%s 证书到期时间更新失败：%w", b.Domain, err))
@@ -603,7 +673,34 @@ func (a *App) RenewCertificates(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-// probeNginx 只读取本机面板的配置标识，不验证公网证书信任或探测业务上游。
+func (a *App) updateCertificateExpiry(ctx context.Context, b Binding, expiresAt string) error {
+	// 定时器独立运行，只更新仍使用该证书的绑定。
+	_, err := a.DB.ExecContext(ctx, `UPDATE bindings SET payload=json_set(payload,'$.expires_at',?)
+		WHERE id=? AND domain=? AND json_extract(payload,'$.certificate_status')='enabled'
+		AND COALESCE(json_extract(payload,'$.certificate_account_id'),'')=?`, expiresAt, b.ID, b.Domain, b.CertificateAccountID)
+	return err
+}
+
+func panelLoopback(host string) string {
+	if ip, _ := netip.ParseAddr(host); ip.Is6() {
+		return "::1"
+	}
+	return "127.0.0.1"
+}
+
+func localPanelEndpoint(config Config, path string) (address, host string) {
+	host = config.PanelDomain
+	if host == "" {
+		host = "localhost"
+	}
+	scheme := "http"
+	if config.HTTPS {
+		scheme = "https"
+	}
+	return scheme + "://" + net.JoinHostPort(panelLoopback(host), fmt.Sprint(config.PanelPort)) + path, host
+}
+
+// probeNginx 在本机回读配置标识。标识留空时检查登录页面和证书覆盖的地址。
 func probeNginx(ctx context.Context, address, host, marker string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -619,8 +716,27 @@ func probeNginx(ctx context.Context, address, host, marker string) error {
 			return err
 		}
 		req.Host = host
+		if ip, _ := netip.ParseAddr(host); ip.Is6() {
+			req.Host = "[" + host + "]"
+		}
 		response, err := client.Do(req)
 		if err == nil {
+			if marker == "" {
+				response.Body.Close()
+				if response.StatusCode != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/html") {
+					return fmt.Errorf("登录页返回 HTTP %d，请检查面板入口", response.StatusCode)
+				}
+				if response.TLS != nil {
+					certificate := response.TLS.PeerCertificates[0]
+					if err := certificate.VerifyHostname(host); err != nil {
+						return err
+					}
+					if now := time.Now(); now.Before(certificate.NotBefore) || !now.Before(certificate.NotAfter) {
+						return errors.New("面板证书已过期或尚未生效")
+					}
+				}
+				return nil
+			}
 			body, readErr := io.ReadAll(io.LimitReader(response.Body, 128))
 			_ = response.Body.Close()
 			if readErr == nil && response.StatusCode == http.StatusOK && string(body) == marker {

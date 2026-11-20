@@ -4,7 +4,8 @@ export interface Access { panel_port: number; panel_domain: string; https: boole
 export interface BindingResult { binding: Binding; operation: Operation|null; access_url: string }
 export const isWildcardHostname = (hostname: string) => hostname.startsWith('*.')
 export function panelLoginURL(access: Access, host = access.panel_domain || window.location.hostname, https = access.https): string {
-  return `${https ? 'https' : 'http'}://${host}:${access.panel_port}${access.login_path || '/'}`
+  const hostname = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+  return `${https ? 'https' : 'http'}://${hostname}:${access.panel_port}${access.login_path || '/'}`
 }
 export const domains = {
  list: () => request<Binding[]>('/bindings'),

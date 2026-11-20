@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -26,7 +27,9 @@ type App struct {
 	Command    func(context.Context, string, ...string) ([]byte, error)
 	NginxProbe func(context.Context, string, string, string) error
 
-	zeroSSLClient *http.Client
+	zeroSSLClient           *http.Client
+	panelIPACMEHTTPClient   *http.Client
+	panelIPCertificateProbe func(context.Context, string, [sha256.Size]byte) error
 }
 
 type APIError struct {
@@ -69,7 +72,8 @@ func Open(root, version string) (*App, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`PRAGMA foreign_keys=ON;
+	_, err = db.Exec(`PRAGMA busy_timeout=3000;
+ PRAGMA foreign_keys=ON;
  CREATE TABLE IF NOT EXISTS administrators (id INTEGER PRIMARY KEY CHECK(id=1),username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY,expires_at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY,kind TEXT NOT NULL,status TEXT NOT NULL,log TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);`)
@@ -80,6 +84,7 @@ func Open(root, version string) (*App, error) {
 	a := &App{Root: root, Config: config, Version: version, DB: db, Mux: http.NewServeMux()}
 	a.zeroSSLClient = &http.Client{Timeout: 8 * time.Second}
 	a.NginxProbe = probeNginx
+	a.panelIPCertificateProbe = probePanelIPCertificate
 	a.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = a.Root

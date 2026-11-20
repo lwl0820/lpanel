@@ -1,6 +1,6 @@
 # 数据库与持久化
 
-面板使用 `database/sql` 和 `modernc.org/sqlite`，数据库位于 `Root/data/panel.db`。`Open` 设置单连接并启用外键检查。基础表随 `Open` 初始化，业务表由对应模块的注册函数使用 `CREATE TABLE IF NOT EXISTS` 创建。修改表结构时要验证已有安装的数据库仍可打开。 [数据库初始化](../../../internal/panel/app.go) · [项目注册](../../../internal/panel/projects.go)
+面板使用 `database/sql` 和 `modernc.org/sqlite`，数据库位于 `Root/data/panel.db`。`Open` 设置单连接并启用外键检查。`busy_timeout=3000` 让服务与终端命令在短时间写锁冲突时等待。基础表随 `Open` 初始化，业务表由对应模块的注册函数使用 `CREATE TABLE IF NOT EXISTS` 创建。修改表结构时要验证已有安装的数据库仍可打开。 [数据库初始化](../../../internal/panel/app.go) · [项目注册](../../../internal/panel/projects.go)
 
 查询通过 `QueryRowContext(...).Scan(...)` 或 `QueryContext` 接收类型化结果，写入通过 `ExecContext` 和 `?` 参数传值。例如网站详情查询：
 

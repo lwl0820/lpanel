@@ -1,32 +1,87 @@
 package panel
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func (a *App) InitializeAdministrator(username, password string) error {
 	username = strings.TrimSpace(username)
-	if username == "" || len(password) < 8 || len(password) > 72 {
-		return fmt.Errorf("管理员不能为空，密码长度须为 8 至 72 字节")
+	if username == "" {
+		return errors.New("管理员用户名不能为空")
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := administratorPasswordHash([]byte(password))
 	if err != nil {
 		return err
 	}
-	_, err = a.DB.Exec("INSERT INTO administrators(id,username,password_hash) VALUES(1,?,?)", username, string(hash))
+	_, err = a.DB.Exec("INSERT INTO administrators(id,username,password_hash) VALUES(1,?,?)", username, hash)
 	if err != nil {
 		return fmt.Errorf("管理员初始化失败，已有账号不会被覆盖：%w", err)
 	}
 	return nil
 }
+
+func administratorPasswordHash(password []byte) (string, error) {
+	if len(password) < 8 || len(password) > 72 {
+		return "", errors.New("密码长度须为 8 至 72 字节")
+	}
+	hash, err := bcrypt.GenerateFromPassword(password, bcrypt.DefaultCost)
+	return string(hash), err
+}
+
+func (a *App) ChangeAdministratorUsername(ctx context.Context, username string) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return errors.New("管理员用户名不能为空")
+	}
+	var id int
+	err := a.DB.QueryRowContext(ctx, "UPDATE administrators SET username=? WHERE id=1 RETURNING id", username).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("面板尚未初始化管理员账号")
+	}
+	if err != nil {
+		return fmt.Errorf("修改管理员用户名失败：%w", err)
+	}
+	return nil
+}
+
+func (a *App) ResetAdministratorPassword(ctx context.Context, password []byte) error {
+	hash, err := administratorPasswordHash(password)
+	if err != nil {
+		return err
+	}
+	tx, err := a.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开始重置密码失败：%w", err)
+	}
+	defer tx.Rollback()
+
+	var id int
+	err = tx.QueryRowContext(ctx, "UPDATE administrators SET password_hash=? WHERE id=1 RETURNING id", hash).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("面板尚未初始化管理员账号")
+	}
+	if err != nil {
+		return fmt.Errorf("更新管理员密码失败：%w", err)
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM sessions"); err != nil {
+		return fmt.Errorf("清除已有会话失败：%w", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("保存新密码失败：%w", err)
+	}
+	return nil
+}
+
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Username string `json:"username"`
@@ -52,8 +107,19 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	}
 	token := hex.EncodeToString(raw)
 	expires := time.Now().Add(24 * time.Hour)
-	if _, err = a.DB.ExecContext(r.Context(), "INSERT INTO sessions(token,expires_at) VALUES(?,?)", token, expires.Unix()); err != nil {
+	// 账号凭据可能在密码校验期间更新，创建会话时确认凭据仍有效。
+	result, err := a.DB.ExecContext(r.Context(), `INSERT INTO sessions(token,expires_at)
+		SELECT ?,? WHERE EXISTS (SELECT 1 FROM administrators WHERE username=? AND password_hash=?)`,
+		token, expires.Unix(), input.Username, hash)
+	if err != nil {
 		WriteError(w, 500, "session_error", "保存会话失败")
+		return
+	}
+	if count, err := result.RowsAffected(); err != nil {
+		WriteError(w, 500, "session_error", "保存会话失败")
+		return
+	} else if count == 0 {
+		WriteError(w, 401, "invalid_credentials", "账号或密码错误")
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: "lpanel_session", Value: token, Path: "/", HttpOnly: true, Secure: a.currentConfig().HTTPS, SameSite: http.SameSiteLaxMode, Expires: expires, MaxAge: 86400})

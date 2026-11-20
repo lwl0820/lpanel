@@ -30,6 +30,9 @@ func run() error {
 	if command == "upgrade-worker" {
 		return runUpgradeCommand(args)
 	}
+	if command == "manage" {
+		return runManageCommand(args)
+	}
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	root := flags.String("root", "/opt/lpanel", "安装根目录")
 	username := flags.String("username", "admin", "管理员账号")

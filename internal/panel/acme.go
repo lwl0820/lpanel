@@ -170,7 +170,10 @@ func (a *App) CreateACMEAccount(ctx context.Context, input ACMEAccountInput) (AC
 func (a *App) saveACMEAccount(ctx context.Context, id string, input ACMEAccountInput, reuseExisting bool) (ACMEAccount, error) {
 	a.domainsMu.Lock()
 	defer a.domainsMu.Unlock()
+	return a.saveACMEAccountLocked(ctx, id, input, reuseExisting)
+}
 
+func (a *App) saveACMEAccountLocked(ctx context.Context, id string, input ACMEAccountInput, reuseExisting bool) (ACMEAccount, error) {
 	name, email := strings.TrimSpace(input.Name), strings.TrimSpace(input.Email)
 	if name == "" || len(name) > 100 {
 		return ACMEAccount{}, errors.New("请填写账户名称，长度不能超过 100 字节")

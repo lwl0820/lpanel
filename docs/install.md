@@ -59,13 +59,42 @@ sudo bash deploy/install.sh --repository lwl0820/lpanel \
 
 使用 `--password` 时，安装运行期间进程列表可能显示密码。若直接键入密码，终端历史也可能记录它。脚本通过标准输入将密码交给面板初始化。手动安装时可省略该参数，使用隐藏输入。
 
+## 在服务器终端管理面板
+
+安装或升级到支持管理命令的版本后，在服务器终端运行以下命令。修改账号或访问设置需要 `sudo`，无需登录网页。
+
+| 操作 | 命令 |
+| --- | --- |
+| 查看帮助 | `/opt/lpanel/current/lpanel manage --help` |
+| 修改管理员用户名 | `sudo /opt/lpanel/current/lpanel manage username <新用户名>` |
+| 重置管理员密码 | `sudo /opt/lpanel/current/lpanel manage password` |
+| 查看当前登录地址 | `sudo /opt/lpanel/current/lpanel manage access` |
+| 修改访问域名或 IP | `sudo /opt/lpanel/current/lpanel manage access --host <域名或IP>` |
+| 修改面板端口 | `sudo /opt/lpanel/current/lpanel manage access --port 9443` |
+| 修改登录入口 | `sudo /opt/lpanel/current/lpanel manage access --login-path /my-entry` |
+| 恢复根路径登录 | `sudo /opt/lpanel/current/lpanel manage access --login-path /` |
+| 开启或关闭 HTTPS | `sudo /opt/lpanel/current/lpanel manage access --https on` 或 `sudo /opt/lpanel/current/lpanel manage access --https off` |
+| 恢复使用服务器地址通过 HTTP 访问 | `sudo /opt/lpanel/current/lpanel manage access --host auto --https off` |
+
+重置密码时，终端会隐藏两次密码输入。重置成功后，原有网页会话需要重新登录。
+
+访问选项可以一起提交。更换地址时会沿用当前的 HTTP 或 HTTPS 设置。启用 HTTPS 后更换到新地址时，面板会先为新地址准备证书。应用访问设置会短暂重启面板，建议在没有部署或升级任务运行时操作。命令会在确认生效后显示新登录地址。
+
+要为公网 IPv4 或 IPv6 开启 HTTPS，可执行以下命令。请将示例中的 IP 替换成服务器的实际地址。面板会向 Let’s Encrypt 申请证书、安装并自动续期。公网必须可以访问服务器的 80 端口和实际面板端口。[HTTP-01 验证说明](https://letsencrypt.org/docs/challenge-types/#http-01-challenge)
+
+```bash
+sudo /opt/lpanel/current/lpanel manage access --host 203.0.113.10 --https on --agree-tos
+```
+
+首次使用 Let’s Encrypt 时，请先阅读服务条款，再通过 `--agree-tos` 确认。签发失败时面板会提示原因并保留原登录入口。[Let’s Encrypt 服务条款](https://letsencrypt.org/repository/)
+
 ## 专用登录入口
 
 安装时可指定 `--login-path /abcdef`，也可在提示时填写。路径以 `/` 开头，每一段可用英文字母、数字、短横线和下划线。`/api`、`/assets` 及其子路径供系统使用。留空或填 `/` 时，从根地址登录。
 
 安装完成后会显示完整登录地址，例如 `https://panel.example.com:8443/abcdef`。启用专用入口时，路径区分大小写，末尾无需加 `/`。未登录访问其他地址会收到 404。登录后可以照常打开和刷新面板页面。
 
-登录后，在「面板设置」的访问设置中可以更改或清除登录路径，并复制新的登录地址。如果忘记路径，可在服务器上用 `sudoedit /opt/lpanel/data/config.json` 查看 `login_path`。要恢复从根地址登录，将其设为空字符串 `""`，保存后执行以下命令。
+登录后，在「面板设置」的访问设置中可以更改或清除登录路径，并复制新的登录地址。如果忘记路径，可通过上面的 `manage access` 命令查看完整登录地址。较早的发行版可在服务器上用 `sudoedit /opt/lpanel/data/config.json` 查看 `login_path`。要在较早版本恢复从根地址登录，将其设为空字符串 `""`，保存后执行以下命令。
 
 ```bash
 sudo /opt/lpanel/current/lpanel setup-nginx --root /opt/lpanel
@@ -74,7 +103,7 @@ sudo systemctl restart lpanel.service
 
 ## 域名与 HTTPS
 
-提前将域名解析到服务器，并开放公网 80 端口和实际面板端口。业务网站还使用标准 80/443。普通域名的 HTTP-01 验证始终使用 80。静态网站支持通过 HTTP 访问通配符主机名，面板域名及自动证书申请使用普通域名。
+安装时填写的绑定域名使用普通域名。请提前将域名解析到服务器，并开放公网 80 端口和实际面板端口。业务网站还使用标准 80/443，静态网站支持通过 HTTP 访问通配符主机名。为公网 IP 开启 HTTPS 请使用终端管理命令。[终端管理说明](#在服务器终端管理面板)
 
 未申请证书时，地址为 `http://服务器地址:面板端口`；绑定域名且证书签发成功后，地址为 `https://面板域名:面板端口`。首次签发失败保留 HTTP 并输出服务器 IP 地址入口，脚本显示失败原因，安装结束不声称 HTTPS 已启用；修正网络或解析后可在面板中重试。
 
