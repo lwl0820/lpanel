@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"验证网站、域名与证书操作失败后的状态"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"按静态网站改动范围选取后端与实际运行检查"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"验证静态网站创建、编辑与相关域名入口"}

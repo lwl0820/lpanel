@@ -1,0 +1,28 @@
+{
+  "id": "static-site-hostnames-identifier",
+  "name": "static-site-hostnames-identifier",
+  "title": "完善静态网站创建与备注编辑",
+  "description": "新建静态网站时填写至少一个主机名，按唯一网站标识生成默认目录，并支持设置和编辑备注。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lwl0820",
+  "assignee": "lwl0820",
+  "createdAt": "2026-11-20",
+  "completedAt": "2026-11-20",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "implementation_status": "已通过验收，主分支功能提交 4e5b4dc"
+  }
+}

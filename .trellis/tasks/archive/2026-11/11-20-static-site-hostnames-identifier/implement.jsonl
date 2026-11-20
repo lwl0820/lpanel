@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"核对网站目录、域名绑定、证书申请与配置回滚的现有契约"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"核对已有数据库升级、唯一约束与单连接查询约定"}
+{"file":".trellis/spec/frontend/api-contract.md","reason":"核对网站创建和编辑的接口、表单错误以及证书状态"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"沿用网站表单、列表与操作状态的组件约定"}
