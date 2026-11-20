@@ -32,6 +32,12 @@ for command in docker apt-get systemctl; do
 done
 cat > "$fixture/bin/curl" <<'SH'
 #!/bin/sh
+printf '%s\n' "$*" >> /opt/lpanel/.tmp/curl-arguments
+if [ "${RETRY_HEALTH:-0}" = 1 ] && [ ! -e /opt/lpanel/.tmp/health-retried ]; then
+  touch /opt/lpanel/.tmp/health-retried
+  case " $* " in *' -fsS '*) echo 'curl: (7) 测试连接失败' >&2 ;; esac
+  exit 7
+fi
 printf '{"status":"ok","version":"v0.1.0"}\n'
 SH
 cat > "$fixture/bin/hostname" <<'SH'
@@ -84,18 +90,21 @@ printf 'mixed-admin\nPANEL.example.com\n\n\n\n' | FAIL_CERT=1 bash /source/deplo
   --archive "$archive" --password test-password --port 8443 > /work/.tmp/cert-result 2>&1
 grep -q '证书未启用' /work/.tmp/cert-result
 grep -q '访问地址：http://192.0.2.10:8443' /work/.tmp/cert-result
+grep -q 'http://127\.0\.0\.1:8443/api/v1/health$' /opt/lpanel/.tmp/curl-arguments
 if grep -q '访问地址：https://' /work/.tmp/cert-result; then exit 18; fi
 [[ -f /opt/lpanel/data/config.json ]]
 grep -q -- '--username mixed-admin --port 8443' /opt/lpanel/.tmp/cli-arguments
 grep -Fxq -- 'bind-panel --root /opt/lpanel --domain panel.example.com --auto-cert --agree-tos --email acme@panel.example.com' /opt/lpanel/.tmp/cli-arguments
 rm -rf /opt/lpanel
-# 关闭标准输入，显式空域名允许 HTTP 安装，密码中的空格和符号保留。
+# 自定义端口用于健康检查，首次探测失败后安静重试。关闭标准输入并保留密码原文。
 cli_password=' leading $pass\!?# '
-EXPECTED_PASSWORD="$cli_password" bash /source/deploy/install.sh \
+RETRY_HEALTH=1 EXPECTED_PASSWORD="$cli_password" bash /source/deploy/install.sh \
   --archive "$archive" --username cli-admin --password "$cli_password" --port 09443 --domain '' \
   </dev/null > /work/.tmp/cli-http-result 2>&1
 grep -q '访问地址：http://192.0.2.10:9443' /work/.tmp/cli-http-result
 grep -q -- '--username cli-admin --port 9443' /opt/lpanel/.tmp/cli-arguments
+[[ "$(grep -c 'http://127\.0\.0\.1:9443/api/v1/health$' /opt/lpanel/.tmp/curl-arguments)" == 2 ]]
+if grep -Fq 'curl: (7)' /work/.tmp/cli-http-result; then exit 19; fi
 if grep -Fq -- "$cli_password" /work/.tmp/cli-http-result /opt/lpanel/.tmp/cli-arguments; then exit 14; fi
 rm -rf /opt/lpanel
 # 未提供证书邮箱时才读取输入。显式空邮箱可直接走 HTTPS 分支。
@@ -108,6 +117,7 @@ bash /source/deploy/install.sh --archive "$archive" --username cli-admin --passw
   --port 8443 --domain panel.example.com --auto-cert y --agree-tos --email '' \
   </dev/null > /work/.tmp/cli-https-result 2>&1
 grep -q '访问地址：https://panel.example.com:8443' /work/.tmp/cli-https-result
+grep -q -- '--resolve panel\.example\.com:8443:127\.0\.0\.1 https://panel\.example\.com:8443/api/v1/health$' /opt/lpanel/.tmp/curl-arguments
 grep -Fxq -- 'bind-panel --root /opt/lpanel --domain panel.example.com --auto-cert --agree-tos --email ' /opt/lpanel/.tmp/cli-arguments
 rm -rf /opt/lpanel
 if bash /source/deploy/install.sh --password --domain '' </dev/null > /work/.tmp/missing-value-result 2>&1; then exit 16; fi
@@ -115,5 +125,5 @@ grep -q -- '--password 缺少参数值' /work/.tmp/missing-value-result
 if bash /source/deploy/install.sh --username cli-admin --password '' </dev/null > /work/.tmp/empty-password-result 2>&1; then exit 17; fi
 grep -q '密码长度须为 8 至 72 字节' /work/.tmp/empty-password-result
 [[ ! -e /opt/lpanel ]]
-echo '安装脚本分支验证通过，覆盖交互、混合输入、无人值守、缺项、密码传递、重跑保护、端口冲突和证书失败回退。'
+echo '安装脚本分支验证通过，覆盖交互、混合输入、无人值守、缺项、密码传递、重跑保护、端口冲突、自定义端口健康检查和证书失败回退。'
 SH

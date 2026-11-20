@@ -232,20 +232,23 @@ if [[ -n "$domain" ]]; then
   fi
   systemctl restart lpanel.service
 fi
+probe_url="http://127.0.0.1:$panel_port"
+probe_args=(--noproxy '*' --max-time 2)
+if [[ -n "$domain" && "$certificate_failed" != y ]]; then
+  probe_url="$url"
+  probe_args+=(--resolve "$domain:$panel_port:127.0.0.1")
+fi
 for attempt in {1..15}; do
-  if curl -fsS http://127.0.0.1:18080/api/v1/health > "$work/health.json"; then break; fi
+  if curl -fs "${probe_args[@]}" "$probe_url/api/v1/health" > "$work/health.json"; then break; fi
+  ((attempt < 15)) || fail '面板健康检查超时，请运行 sudo journalctl -u lpanel.service -u nginx.service -n 50 查看服务日志'
   sleep 1
 done
-python3 - "$work/health.json" "$version" <<'PY'
+python3 - "$work/health.json" "$version" 2>/dev/null <<'PY' || fail '面板健康检查返回异常，请检查服务日志'
 import json, sys
 state=json.load(open(sys.argv[1]))
-if state.get('status')!='ok' or state.get('version')!=sys.argv[2]: raise SystemExit('面板服务健康检查失败')
+if state.get('status')!='ok' or state.get('version')!=sys.argv[2]: raise SystemExit(1)
 PY
 systemctl is-active --quiet nginx.service lpanel.service || fail '面板或 Nginx 服务未正常运行'
-if [[ -n "$domain" ]]; then
-  curl -fsS --resolve "$domain:$panel_port:127.0.0.1" "$url" > /dev/null || fail 'Nginx 面板入口验证失败，请检查服务日志'
-else
-  curl -fsS "http://127.0.0.1:$panel_port" > /dev/null || fail 'Nginx 面板入口验证失败，请检查服务日志'
-fi
+curl -fsS "${probe_args[@]}" "$probe_url" > /dev/null || fail 'Nginx 面板入口验证失败，请检查服务日志'
 echo "面板安装完成，访问地址：$url"
 [[ "$certificate_failed" != y ]] || echo '证书未启用，HTTP 安装已完成，HTTPS 仍需重试。'
