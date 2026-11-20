@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProjectPortNormalization(t *testing.T) {
@@ -63,10 +66,25 @@ func TestProjectSaveAndSecrets(t *testing.T) {
 		}
 	}
 	a.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "docker" && args[len(args)-1] == "json" {
-			return []byte(`{"services":{"web":{"ports":[{"target":80,"published":"18080"}]}}}`), nil
+		if name != "docker" || len(args) < 9 {
+			return nil, fmt.Errorf("意外的命令：%s %v", name, args)
 		}
-		return nil, nil
+		switch {
+		case slices.Equal(args[9:], []string{"config", "--format", "json"}):
+			config, err := os.ReadFile(args[8])
+			if err != nil {
+				return nil, err
+			}
+			if string(config) == "bad" {
+				return []byte("secret-value"), fmt.Errorf("配置无效")
+			}
+			return []byte(`{"services":{"web":{"ports":[{"target":80,"published":"18080"}]}}}`), nil
+		case slices.Equal(args[9:], []string{"up", "-d", "--remove-orphans"}):
+			return []byte("已启动服务"), nil
+		case slices.Equal(args[9:], []string{"ps", "--all", "--format", "json"}):
+			return []byte(`[]`), nil
+		}
+		return nil, fmt.Errorf("意外的命令：%s %v", name, args)
 	}
 	login := call(a, "POST", "/api/v1/auth/login", `{"username":"管理员","password":"test-password"}`, nil)
 	cookie := login.Result().Cookies()[0]
@@ -75,11 +93,36 @@ func TestProjectSaveAndSecrets(t *testing.T) {
 	}
 	body := `{"name":"测试网站","compose":"services:\\n web:","environment":"TOKEN=secret-value"}`
 	w := call(a, "POST", "/api/v1/projects", body, cookie)
-	if w.Code != 200 {
+	if w.Code != http.StatusOK {
 		t.Fatal(w.Body.String())
 	}
-	var p Project
-	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	var p struct {
+		Project
+		Operation Operation `json:"operation"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Operation.ID == "" || p.Operation.Kind != "project_deploy" || p.Operation.Status != "running" {
+		t.Fatalf("创建项目未返回部署操作：%+v", p.Operation)
+	}
+	var operation Operation
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		status := call(a, "GET", "/api/v1/operations/"+p.Operation.ID, "", cookie)
+		if status.Code != http.StatusOK {
+			t.Fatal(status.Body.String())
+		}
+		if err := json.Unmarshal(status.Body.Bytes(), &operation); err != nil {
+			t.Fatal(err)
+		}
+		if operation.Status != "running" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if operation.Status != "success" || operation.Log != "已启动服务" {
+		t.Fatalf("自动部署未成功：%+v", operation)
+	}
 	if _, err := os.Stat(filepath.Join(root, "data/projects", p.ID, ".env")); err != nil {
 		t.Fatal(err)
 	}
@@ -87,18 +130,56 @@ func TestProjectSaveAndSecrets(t *testing.T) {
 	if strings.Contains(list.Body.String(), "secret-value") || strings.Contains(list.Body.String(), "TOKEN") {
 		t.Fatal("列表泄露环境变量")
 	}
-	a.Command = func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("secret-value"), fmt.Errorf("配置无效")
+	update := call(a, "PUT", "/api/v1/projects/"+p.ID, strings.Replace(body, "测试网站", "新名称", 1), cookie)
+	if update.Code != http.StatusOK || strings.Contains(update.Body.String(), `"operation"`) {
+		t.Fatal(update.Body.String())
 	}
-	bad := call(a, "PUT", "/api/v1/projects/"+p.ID, `{"name":"错误配置","compose":"bad","environment":"TOKEN=secret-value"}`, cookie)
+	badConfig := `{"name":"错误配置","compose":"bad","environment":"TOKEN=secret-value"}`
+	bad := call(a, "POST", "/api/v1/projects", badConfig, cookie)
 	if bad.Code != 400 || strings.Contains(bad.Body.String(), "secret-value") {
 		t.Fatal(bad.Body.String())
 	}
-	stored, err := a.project(context.Background(), p.ID)
-	if err != nil || stored.Name != "测试网站" {
+	if err := a.DB.QueryRowContext(t.Context(), "SELECT count(*) FROM operations").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("编辑或配置校验失败时启动了部署：操作数 %d，错误 %v", count, err)
+	}
+	bad = call(a, "PUT", "/api/v1/projects/"+p.ID, badConfig, cookie)
+	if bad.Code != 400 || strings.Contains(bad.Body.String(), "secret-value") {
+		t.Fatal(bad.Body.String())
+	}
+	stored, err := a.project(t.Context(), p.ID)
+	if err != nil || stored.Name != "新名称" {
 		t.Fatal("错误配置覆盖了项目")
 	}
 }
+
+func TestProjectCreateKeepsProjectWhenDeploymentCannotStart(t *testing.T) {
+	a, _ := testApp(t)
+	a.Command = func(context.Context, string, ...string) ([]byte, error) {
+		return []byte(`{"services":{"web":{}}}`), nil
+	}
+	if _, err := a.DB.ExecContext(t.Context(), `CREATE TRIGGER reject_deployment BEFORE INSERT ON operations
+		WHEN NEW.kind = 'project_deploy' BEGIN SELECT RAISE(ABORT, '测试拒绝提交部署'); END`); err != nil {
+		t.Fatal(err)
+	}
+	login := call(a, "POST", "/api/v1/auth/login", `{"username":"管理员","password":"test-password"}`, nil)
+	w := call(a, "POST", "/api/v1/projects", `{"name":"待部署项目","compose":"services: {}"}`, login.Result().Cookies()[0])
+	var result struct {
+		Project
+		Operation       *Operation `json:"operation"`
+		DeploymentError string     `json:"deployment_error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || result.Operation != nil || !strings.Contains(result.DeploymentError, "重试") {
+		t.Fatal(w.Body.String())
+	}
+	stored, err := a.project(t.Context(), result.ID)
+	if err != nil || stored.Name != "待部署项目" {
+		t.Fatalf("部署无法启动时未保留项目：%+v %v", stored, err)
+	}
+}
+
 func TestProjectDeletePreservesVolumesAndStopBindings(t *testing.T) {
 	a, root := testApp(t)
 	var count int

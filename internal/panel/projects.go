@@ -170,12 +170,13 @@ func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.ID = r.PathValue("id")
+	creating := p.ID == ""
 	p.Name = strings.TrimSpace(p.Name)
 	if p.Name == "" || len(p.Name) > 100 {
 		WriteError(w, 400, "invalid_name", "请输入不超过 100 字节的项目名称")
 		return
 	}
-	if p.ID != "" {
+	if !creating {
 		if _, err := a.project(r.Context(), p.ID); err != nil {
 			WriteError(w, 404, "not_found", "项目不存在")
 			return
@@ -209,7 +210,25 @@ func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 500, "project_error", "保存项目失败")
 		return
 	}
-	WriteJSON(w, 200, p)
+	if !creating {
+		WriteJSON(w, 200, p)
+		return
+	}
+
+	result := struct {
+		Project
+		Operation       *Operation `json:"operation,omitzero"`
+		DeploymentError string     `json:"deployment_error,omitempty"`
+	}{Project: p}
+	op, err := a.StartOperation("project_deploy", func(ctx context.Context) (string, error) {
+		return a.runProjectAction(ctx, p, "deploy")
+	})
+	if err != nil {
+		result.DeploymentError = "项目已创建，暂时无法开始部署。请点击项目旁的「部署」重试。"
+	} else {
+		result.Operation = new(op)
+	}
+	WriteJSON(w, 200, result)
 }
 func (a *App) writeProjectFiles(p Project, dir string) error {
 	if strings.TrimSpace(p.Compose) == "" {

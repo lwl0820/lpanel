@@ -68,9 +68,28 @@ async function scan() {
 }
 const hostPort = (p: ProjectPort) => p.source === 'expose' ? '未发布（仅内部访问）' : p.published && p.published !== '0' ? `${p.host_ip ? p.host_ip + ':' : ''}${p.published}` : '部署后自动分配'
 async function save() {
-  if (!(await formRef.value?.validate().catch(() => false))) return
+  if (!(await formRef.value?.validate().catch(() => false)) || saving.value) return
   saving.value = true; editorError.value = ''
-  try { await projects.save(selected.value?.id ?? '', form); editor.value = false; ElMessage.success(selected.value ? '配置已保存，重新部署后生效' : '项目已创建'); await load() } catch (e) { editorError.value = errorText(e, '保存失败') } finally { saving.value = false }
+  try {
+    if (selected.value) {
+      await projects.update(selected.value.id, form)
+      editor.value = false
+      ElMessage.success('配置已保存，重新部署后生效')
+    } else {
+      const result = await projects.create(form)
+      editor.value = false
+      if (result.operation) {
+        void track(result.operation, `部署 ${result.name}`, `${result.name} 部署完成`)
+      } else if (result.deployment_error) {
+        ElMessage.warning(result.deployment_error)
+      }
+    }
+    await load()
+  } catch (e) {
+    editorError.value = errorText(e, '保存失败')
+  } finally {
+    saving.value = false
+  }
 }
 // 状态与日志抽屉
 const inspection = ref(false)
@@ -102,8 +121,8 @@ const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.nam
   </PageHeader>
   <OperationBanner :operation="operation" :label="operationLabel" @close="operation = null"/>
   <div class="panel">
-    <ListState :loading="loading" :error="loadError" :empty="!items.length" icon="projects" title="还没有容器项目" description="新建一个项目，粘贴 Compose 配置后即可部署。" @retry="reload">
-      <template #empty-action><el-button type="primary" @click="edit()"><AppIcon name="plus"/>新建项目</el-button></template>
+    <ListState :loading="loading" :error="loadError" :empty="!items.length" icon="projects" title="还没有容器项目" description="新建项目时粘贴 Compose 配置，面板会自动部署。" @retry="reload">
+      <template #empty-action><el-button type="primary" :disabled="busy" @click="edit()"><AppIcon name="plus"/>新建项目</el-button></template>
       <div class="tbl-wrap">
         <table class="rtable">
           <thead><tr><th>项目</th><th>配置更新时间</th><th><span class="sr">操作</span></th></tr></thead>
@@ -119,7 +138,7 @@ const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.nam
     </ListState>
   </div>
   <el-drawer v-model="editor" :title="editorTitle" size="min(720px, 100vw)" :close-on-click-modal="false" append-to-body class="app-drawer">
-    <template #header><div><h2>{{ editorTitle }}</h2><p>{{ selected ? `配置更新于 ${formatTime(selected.updated_at)}` : '保存后需要点击“部署”才会启动容器。' }}</p></div></template>
+    <template #header><div><h2>{{ editorTitle }}</h2><p v-if="selected">配置更新于 {{ formatTime(selected.updated_at) }}</p></div></template>
     <div v-loading="editorLoading" class="drawer-body">
       <el-alert v-if="editorError" :title="editorError" type="error" :closable="false" show-icon/>
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="save">
@@ -135,7 +154,7 @@ const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.nam
         </div>
       </section>
     </div>
-    <template #footer><el-button @click="editor = false">取消</el-button><el-button type="primary" :loading="saving" :disabled="editorLoading" @click="save">{{ selected ? '保存配置' : '创建项目' }}</el-button></template>
+    <template #footer><el-button @click="editor = false">取消</el-button><el-button type="primary" :loading="saving" :disabled="editorLoading" @click="save">{{ selected ? '保存配置' : '创建' }}</el-button></template>
   </el-drawer>
   <el-drawer v-model="inspection" :title="`${selected?.name ?? ''} · 状态与日志`" size="min(720px, 100vw)" append-to-body class="app-drawer">
     <template #header><div><h2>{{ selected?.name }} · 状态与日志</h2><p>容器运行状态与最近的日志。</p></div></template>

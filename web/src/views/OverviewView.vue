@@ -67,7 +67,7 @@ async function certificateDone({ binding, operation }: CertificateRequestResult)
       <section v-if="fresh" class="panel">
         <div class="panel-h"><h2>开始使用</h2></div>
         <ul class="todo">
-          <li><span class="dot info">1</span><span class="txt"><b>添加容器项目</b><span>粘贴 Compose 配置，一键部署。</span></span><el-button size="small" type="primary" @click="$router.push('/projects?new=1')">新建项目</el-button></li>
+          <li><span class="dot info">1</span><span class="txt"><b>添加容器项目</b><span>粘贴 Compose 配置，创建时自动部署。</span></span><el-button size="small" type="primary" @click="$router.push('/projects?new=1')">新建项目</el-button></li>
           <li><span class="dot info">2</span><span class="txt"><b>或添加静态网站</b><span>指定服务器上的网页目录。</span></span><el-button size="small" @click="$router.push('/sites?new=1')">新建网站</el-button></li>
           <li><span class="dot info">3</span><span class="txt"><b>绑定域名并申请证书</b><span>先把域名解析到本服务器。</span></span><el-button size="small" @click="$router.push('/domains')">去绑定</el-button></li>
         </ul>
