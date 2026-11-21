@@ -10,3 +10,14 @@ export function formatDate(value: string) {
   return text === '—' ? text : text.slice(0, 10)
 }
 export const errorText = (e: unknown, fallback: string) => e instanceof Error && e.message ? e.message : fallback
+
+const capacityFormat = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 1 })
+const capacityUnits = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
+export function formatBytes(bytes: number) {
+  const unit = bytes < 1 ? 0 : Math.min(capacityUnits.length - 1, Math.floor(Math.log2(bytes) / 10))
+  return `${capacityFormat.format(bytes / 1024 ** unit)} ${capacityUnits[unit]}`
+}
+
+export const formatPercent = (percent: number | null) => percent === null ? '暂不可用' : `${capacityFormat.format(percent)}%`
+export const usagePercent = (used: number, total: number) => total > 0 ? used / total * 100 : null
+export const formatSampleTime = (at: number) => new Date(at * 1000).toLocaleTimeString('zh-CN', { hour12: false })

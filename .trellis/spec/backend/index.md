@@ -11,6 +11,7 @@
 | [交换空间](./server-swap.md) | 交换文件的来源、分区只读和开机配置 |
 | [时区与时间同步](./server-time.md) | 服务器当地时间、自动校时与单次校时结果 |
 | [服务器默认 DNS](./server-dns.md) | 默认上游、持久设置、回读与恢复 |
+| [服务器资源监控](./server-monitor.md) | 实时采样、进程速率、分钟历史与保留期 |
 | [目录结构](./directory-structure.md) | 应用组装、业务文件与测试位置 |
 | [数据库](./database-guidelines.md) | SQLite 查询、表初始化和回滚 |
 | [错误处理](./error-handling.md) | 接口错误、长操作与生效检查 |

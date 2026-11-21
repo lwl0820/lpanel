@@ -10,6 +10,7 @@ import { errorText, formatDate, formatTime } from '../format'
 import AppIcon from '../components/AppIcon.vue'
 import PageHeader from '../components/PageHeader.vue'
 import ListState from '../components/ListState.vue'
+import MonitorSummary from '../components/MonitorSummary.vue'
 import OperationBanner from '../components/OperationBanner.vue'
 import RequestCertificateDialog, { type CertificateRequestResult } from '../components/RequestCertificateDialog.vue'
 interface Data { projects: Project[]; sites: Site[]; bindings: Binding[]; access: Access; upgrade: UpgradeState }
@@ -58,6 +59,7 @@ async function certificateDone({ binding, operation }: CertificateRequestResult)
 <template>
   <PageHeader title="概览" description="服务器上的项目、网站和需要处理的事项。"/>
   <OperationBanner :operation="operation" :label="operationLabel" @close="operation = null"/>
+  <MonitorSummary overview/>
   <div v-if="loading || loadError" class="panel"><ListState :loading="loading" :error="loadError" @retry="reload"/></div>
   <template v-else-if="data">
     <nav class="panel stats" aria-label="资源统计">

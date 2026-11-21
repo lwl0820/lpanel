@@ -76,6 +76,7 @@ async function logout() {
       <main class="main">
         <div class="content">
           <nav v-if="route.path.startsWith('/server/')" class="server-nav" aria-label="服务器管理">
+            <RouterLink to="/server/monitor">服务器监控</RouterLink>
             <RouterLink to="/server/files">文件管理</RouterLink>
             <RouterLink to="/server/firewall">防火墙</RouterLink>
             <RouterLink to="/server/swap">交换空间</RouterLink>

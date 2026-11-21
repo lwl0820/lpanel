@@ -42,6 +42,7 @@ type App struct {
 	serverTimeSyncMarker    string
 	serverDNSHostRoot       string
 	serverTimeSyncRunning   atomic.Bool
+	monitorLive             monitorLiveState
 }
 
 type APIError struct {
@@ -139,6 +140,11 @@ func Open(root, version string) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := a.registerMonitorHistory(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	a.registerMonitorLive()
 	a.Mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := a.DB.PingContext(r.Context()); err != nil {
 			WriteError(w, 503, "database_unavailable", "数据库不可用")
@@ -177,6 +183,13 @@ func (a *App) Serve(ctx context.Context) error {
 	if _, err := a.DB.Exec("UPDATE operations SET status='failed',error='服务重启，操作已中断' WHERE status IN ('queued','running') AND kind!='upgrade'"); err != nil {
 		return err
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	var monitor sync.WaitGroup
+	monitor.Go(func() { a.runMonitorHistory(ctx) })
+	defer func() {
+		cancel()
+		monitor.Wait()
+	}()
 	a.StartUpgradeChecker(ctx)
 	server := &http.Server{Addr: a.Config.Listen, Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
