@@ -199,7 +199,7 @@ func TestProjectCreateKeepsProjectWhenDeploymentCannotStart(t *testing.T) {
 	}
 }
 
-func TestProjectContainerLogs(t *testing.T) {
+func TestProjectContainerLogsAndActions(t *testing.T) {
 	a, _ := testApp(t)
 	const firstID = "0123456789aa"
 	const secondID = "0123456789bb"
@@ -209,7 +209,8 @@ func TestProjectContainerLogs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var failLogs bool
+	var failLogs, failAction bool
+	var actions [][]string
 	a.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "docker" && len(args) >= 9 && slices.Equal(args[9:], []string{"ps", "--all", "--format", "json"}) {
 			if args[2] == "lpanel-other" {
@@ -222,6 +223,13 @@ func TestProjectContainerLogs(t *testing.T) {
 				return []byte("日志驱动错误 secret-value"), errors.New("读取失败")
 			}
 			return []byte(args[4] + " secret-value"), nil
+		}
+		if name == "docker" && len(args) == 3 && (args[0] == "start" || args[0] == "stop") {
+			actions = append(actions, args)
+			if failAction {
+				return []byte("容器网络错误 secret-value"), errors.New("启动失败")
+			}
+			return nil, nil
 		}
 		return nil, fmt.Errorf("意外的命令：%s %v", name, args)
 	}
@@ -248,6 +256,31 @@ func TestProjectContainerLogs(t *testing.T) {
 	w := call(a, "GET", path+firstID+"/logs", "", cookie)
 	if w.Code != http.StatusBadGateway || strings.Contains(w.Body.String(), "secret-value") || !strings.Contains(w.Body.String(), "日志驱动错误") {
 		t.Fatalf("日志错误提示或脱敏失败：%s", w.Body.String())
+	}
+
+	for _, tt := range []struct {
+		path   string
+		cookie *http.Cookie
+		status int
+	}{
+		{firstID + "/actions/start", nil, http.StatusUnauthorized},
+		{firstID + "/actions/restart", cookie, http.StatusBadRequest},
+		{otherID + "/actions/stop", cookie, http.StatusNotFound},
+		{firstID + "/actions/start", cookie, http.StatusOK},
+		{secondID + "/actions/stop", cookie, http.StatusOK},
+	} {
+		w := call(a, "POST", path+tt.path, "", tt.cookie)
+		if w.Code != tt.status {
+			t.Fatalf("容器操作 %s 返回 %d，期望 %d：%s", tt.path, w.Code, tt.status, w.Body.String())
+		}
+	}
+	if len(actions) != 2 || !slices.Equal(actions[0], []string{"start", "--", firstID}) || !slices.Equal(actions[1], []string{"stop", "--", secondID}) {
+		t.Fatalf("操作命令未限定到所选容器：%v", actions)
+	}
+	failAction = true
+	w = call(a, "POST", path+firstID+"/actions/start", "", cookie)
+	if w.Code != http.StatusBadGateway || strings.Contains(w.Body.String(), "secret-value") || !strings.Contains(w.Body.String(), "容器网络错误") {
+		t.Fatalf("容器操作错误提示或脱敏失败：%s", w.Body.String())
 	}
 }
 

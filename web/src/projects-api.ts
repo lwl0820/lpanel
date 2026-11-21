@@ -3,6 +3,7 @@ export interface Project { id: string; name: string; compose?: string; environme
 export interface ProjectInput { id?: string; name: string; compose: string; environment: string }
 export interface ProjectPort { service: string; container_port: number; published: string; host_ip: string; protocol: string; source: 'ports' | 'expose' }
 export interface ProjectContainer { ID: string; Name: string; Service: string; State: string; Health: string; ExitCode: number; Publishers: { URL: string; TargetPort: number; PublishedPort: number; Protocol: string }[] | null }
+export type ContainerAction = 'start' | 'stop'
 type ProjectSaveResult = Project & { operation?: Operation; deployment_error?: string }
 export const projects = {
  list: () => request<Project[]>('/projects'),
@@ -14,6 +15,7 @@ export const projects = {
  status: (id: string) => request<ProjectContainer[]>(`/projects/${id}/status`),
  logs: (id: string) => request<{ log: string }>(`/projects/${id}/logs`),
  containerLogs: (id: string, containerId: string) => request<{ log: string }>(`/projects/${id}/containers/${encodeURIComponent(containerId)}/logs`),
+ containerAction: (id: string, containerId: string, action: ContainerAction) => request<{ message: string }>(`/projects/${id}/containers/${encodeURIComponent(containerId)}/actions/${action}`, { method: 'POST' }),
  bind: (id: string, input: { domain: string; service: string; container_port: number; scheme: string; auto_certificate: boolean; acme_account_id?: string }) => request<{ operation: Operation | null }>(`/projects/${id}/bindings`, { method: 'POST', body: JSON.stringify(input) }),
  operation: (id: string) => request<Operation>(`/operations/${id}`),
 }

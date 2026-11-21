@@ -2,6 +2,7 @@ package panel
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -164,6 +165,7 @@ func (a *App) RegisterProjectRoutes() error {
 		WriteJSON(w, 200, map[string]string{"log": a.redactProjectOutput(p, string(out))})
 	})))
 	a.Mux.Handle("GET /api/v1/projects/{id}/containers/{containerID}/logs", a.RequireAuth(http.HandlerFunc(a.projectContainerLogs)))
+	a.Mux.Handle("POST /api/v1/projects/{id}/containers/{containerID}/actions/{action}", a.RequireAuth(http.HandlerFunc(a.projectContainerAction)))
 	a.Mux.Handle("POST /api/v1/projects/{id}/bindings", a.RequireAuth(http.HandlerFunc(a.bindProject)))
 	return nil
 }
@@ -401,30 +403,61 @@ func (a *App) ProjectStatus(ctx context.Context, p Project) ([]ProjectContainer,
 	}
 	return decodeProjectContainers(out)
 }
-func (a *App) projectContainerLogs(w http.ResponseWriter, r *http.Request) {
+func (a *App) requireProjectContainer(w http.ResponseWriter, r *http.Request) (Project, bool) {
 	ctx := r.Context()
 	p, err := a.project(ctx, r.PathValue("id"))
 	if err != nil {
 		WriteError(w, 404, "not_found", "项目不存在")
-		return
+		return Project{}, false
 	}
 	items, err := a.ProjectStatus(ctx, p)
 	if err != nil {
 		WriteError(w, 502, "docker_error", err.Error())
-		return
+		return Project{}, false
 	}
 	id := r.PathValue("containerID")
 	if !slices.ContainsFunc(items, func(item ProjectContainer) bool { return item.ID == id }) {
 		WriteError(w, 404, "not_found", "此项目中没有该容器，请刷新项目列表")
+		return Project{}, false
+	}
+	return p, true
+}
+func (a *App) projectContainerLogs(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireProjectContainer(w, r)
+	if !ok {
 		return
 	}
-	out, err := a.Command(ctx, "docker", "logs", "--tail", "200", "--", id)
+	out, err := a.Command(r.Context(), "docker", "logs", "--tail", "200", "--", r.PathValue("containerID"))
 	log := a.redactProjectOutput(p, string(out))
 	if err != nil {
 		WriteError(w, 502, "docker_error", fmt.Sprintf("读取容器日志失败：%s：%v", log, err))
 		return
 	}
 	WriteJSON(w, 200, map[string]string{"log": log})
+}
+func (a *App) projectContainerAction(w http.ResponseWriter, r *http.Request) {
+	action := r.PathValue("action")
+	var label string
+	switch action {
+	case "start":
+		label = "启动"
+	case "stop":
+		label = "停止"
+	default:
+		WriteError(w, 400, "invalid_action", "容器操作无效")
+		return
+	}
+	p, ok := a.requireProjectContainer(w, r)
+	if !ok {
+		return
+	}
+	out, err := a.Command(r.Context(), "docker", action, "--", r.PathValue("containerID"))
+	if err != nil {
+		detail := cmp.Or(strings.TrimSpace(string(out)), err.Error())
+		WriteError(w, 502, "docker_error", label+"容器失败："+a.redactProjectOutput(p, detail))
+		return
+	}
+	WriteJSON(w, 200, map[string]string{"message": "容器已" + label})
 }
 func projectUpstream(items []ProjectContainer, service string, port int, scheme string) (string, error) {
 	for _, item := range items {

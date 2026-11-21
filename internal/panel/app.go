@@ -136,6 +136,7 @@ func Open(root, version string) (*App, error) {
 	a.registerServerFirewall()
 	a.registerServerTime()
 	a.registerServerDNS()
+	a.registerImages()
 	if err := a.registerServerSwap(); err != nil {
 		_ = db.Close()
 		return nil, err

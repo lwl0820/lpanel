@@ -15,11 +15,12 @@ const submitting = ref(false)
 const error = ref('')
 const navigation: { path: string; label: string; shortLabel?: string; icon: IconName }[] = [
   { path: '/', label: '概览', icon: 'overview' },
-  { path: '/projects', label: '容器项目', icon: 'projects' },
-  { path: '/sites', label: '静态网站', icon: 'sites' },
+  { path: '/projects', label: '容器项目', shortLabel: '项目', icon: 'projects' },
+  { path: '/images', label: '镜像管理', shortLabel: '镜像', icon: 'images' },
+  { path: '/sites', label: '静态网站', shortLabel: '网站', icon: 'sites' },
   { path: '/domains', label: '域名与证书', shortLabel: '域名', icon: 'domains' },
   { path: '/server', label: '服务器管理', shortLabel: '服务器', icon: 'server' },
-  { path: '/settings', label: '面板设置', icon: 'settings' },
+  { path: '/settings', label: '面板设置', shortLabel: '设置', icon: 'settings' },
 ]
 watchEffect(() => { document.title = user.value ? pageTitle(route) : LOGIN_TITLE })
 onMounted(async () => {

@@ -14,6 +14,8 @@
 
 容器项目信息包含服务端提供的 `directory`。用 `projects.status` 读取容器状态并用同一结果渲染项目状态和展开内容。单容器日志用 `projects.containerLogs` 请求容器 `ID` 对应的记录，项目汇总日志使用 `projects.logs`。
 
+单容器启停通过 `projects.containerAction` 使用当前行的容器 ID，操作结束后重新读取项目状态。镜像页按完整镜像 ID 展示每组标签。删除和清理均需确认，对话框默认聚焦「取消」。成功或失败后刷新列表，失败时展示接口返回的原因。
+
 证书账户由 `GET /api/v1/acme/accounts` 提供，返回账户列表、提供商信息和默认账户 ID。绑定域名、新建静态站和手动签发均用 `acme_account_id` 提交本次选择。绑定返回的 `certificate_account_id` 用于展示实际签发账户。
 
 ## 3. 数据与状态

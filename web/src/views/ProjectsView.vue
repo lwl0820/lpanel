@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, shallowReactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type ButtonInstance, type FormInstance, type FormRules } from 'element-plus'
-import { projects, type Project, type ProjectContainer, type ProjectPort } from '../projects-api'
+import { projects, type ContainerAction, type Project, type ProjectContainer, type ProjectPort } from '../projects-api'
 import { domains, type Binding } from '../domain-api'
 import { useOperation } from '../useOperation'
 import { errorText, formatTime } from '../format'
@@ -32,12 +32,12 @@ async function refreshStatus(id: string) {
   }
 }
 
-const containerStates: Record<string, { label: string; tone: string }> = {
-  running: { label: '运行中', tone: 'ok' },
-  restarting: { label: '正在重启', tone: 'warn' },
-  exited: { label: '已停止', tone: 'idle' },
-  created: { label: '未启动', tone: 'idle' },
-  paused: { label: '已暂停', tone: 'warn' },
+const containerStates: Record<string, { label: string; tone: string; action?: ContainerAction }> = {
+  running: { label: '运行中', tone: 'ok', action: 'stop' },
+  restarting: { label: '正在重启', tone: 'warn', action: 'stop' },
+  exited: { label: '已停止', tone: 'idle', action: 'start' },
+  created: { label: '未启动', tone: 'idle', action: 'start' },
+  paused: { label: '已暂停', tone: 'warn', action: 'stop' },
   removing: { label: '正在移除', tone: 'run' },
   dead: { label: '异常', tone: 'bad' },
 }
@@ -81,6 +81,24 @@ onMounted(() => { void load(); if (route.query.new) { void edit(); void router.r
 async function reload() { loading.value = true; await load() }
 const domainsOf = (id: string) => bindings.value.filter(b => b.kind === 'project' && b.resource_id === id)
 const verbs = { start: ['启动', '已启动'], stop: ['停止', '已停止'], restart: ['重启', '已重启'], delete: ['删除', '已删除'] }
+const changingContainer = ref('')
+async function changeContainer(project: Project, container: ProjectContainer) {
+  const command = containerStates[container.State]?.action
+  if (busy.value || !container.ID || !command) return
+  busy.value = true
+  changingContainer.value = container.ID
+  try {
+    const result = await projects.containerAction(project.id, container.ID, command)
+    ElMessage.success(result.message)
+  } catch (e) {
+    ElMessage.error(errorText(e, `${verbs[command][0]}容器失败`))
+  } finally {
+    await refreshStatus(project.id)
+    changingContainer.value = ''
+    busy.value = false
+  }
+}
+
 async function action(item: Project, name: keyof typeof verbs, removeFiles = false) {
   const runtime = runtimes.get(item.id)
   const command = name === 'start' && runtime?.state === 'ready' && !runtime.containers.length ? 'deploy' : name
@@ -277,7 +295,14 @@ const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.nam
                               <span v-else :class="['pill', containerStates[container.State]?.tone ?? 'idle']">{{ containerStates[container.State]?.label ?? '状态未知' }}</span>
                             </td>
                             <td data-label="健康检查" :class="{ 'health-unhealthy': container.Health === 'unhealthy' }">{{ healthLabels[container.Health] ?? '—' }}</td>
-                            <td class="actions"><el-button size="small" :disabled="!container.ID" @click="openLogs(item, container)">查看日志</el-button></td>
+                            <td class="actions">
+                              <span class="row-act">
+                                <el-button v-if="container.ID && containerStates[container.State]?.action" size="small" :loading="changingContainer === container.ID" :disabled="busy" @click="changeContainer(item, container)">
+                                  {{ containerStates[container.State].action === 'start' ? '启动' : '停止' }}
+                                </el-button>
+                                <el-button size="small" :disabled="!container.ID" @click="openLogs(item, container)">查看日志</el-button>
+                              </span>
+                            </td>
                           </tr>
                         </tbody>
                       </table>

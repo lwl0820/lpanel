@@ -180,6 +180,8 @@ tbody tr:hover td { background: var(--sunken); }
 td .name { font-weight: 600; }
 td .sub { display: block; color: var(--faint); font-size: var(--t-sm); }
 .site-table td.first, .site-table td.mono { overflow-wrap: anywhere; }
+.image-table td.first, .image-confirm-text { overflow-wrap: anywhere; }
+.image-table .name { display: block; }
 td.actions { text-align: right; white-space: nowrap; width: 1%; }
 td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
 .project-name { display: flex; align-items: flex-start; gap: 6px; overflow-wrap: anywhere; }
@@ -401,13 +403,13 @@ td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
   .rtable td[data-label] { display: flex; gap: 12px; align-items: baseline; font-size: var(--t-sm); }
   .rtable td[data-label]::before { content: attr(data-label); flex: 0 0 64px; color: var(--faint); }
   .rtable td.actions { position: absolute; top: 12px; right: 12px; width: auto; }
-  .project-table td.first { padding-right: 0; }
-  .project-table td.actions { position: static; padding-top: 8px; text-align: left; }
+  .project-table td.first, .image-table td.first { padding-right: 0; }
+  .project-table td.actions, .image-table td.actions { position: static; padding-top: 8px; text-align: left; }
   .project-table td.actions .row-act { flex-wrap: wrap; }
   .project-table > tbody > .project-detail { padding-top: 0; }
   .container-table td { padding: 2px 0; white-space: normal; overflow-wrap: anywhere; }
 }
-@media (max-width: 380px) {
+@media (max-width: 450px) {
   .nav-full { display: none; }
   .nav-short { display: inline; }
 }
