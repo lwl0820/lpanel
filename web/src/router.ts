@@ -9,6 +9,7 @@ export const routes: RouteRecordRaw[] = [
   { path: '/server', redirect: '/server/files' },
   { path: '/server/files', component: () => import('./views/ServerFilesView.vue'), meta: { title: '文件管理' } },
   { path: '/server/firewall', component: () => import('./views/ServerFirewallView.vue'), meta: { title: '防火墙' } },
+  { path: '/server/swap', component: () => import('./views/ServerSwapView.vue'), meta: { title: '交换空间' } },
   { path: '/settings', component: () => import('./views/SettingsView.vue'), meta: { title: '面板设置' } },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]

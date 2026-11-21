@@ -21,6 +21,7 @@ type App struct {
 	domainsMu  sync.Mutex
 	configMu   sync.RWMutex
 	firewallMu sync.Mutex
+	swapMu     sync.Mutex
 	Root       string
 	Config     Config
 	Version    string
@@ -33,6 +34,8 @@ type App struct {
 	panelIPACMEHTTPClient   *http.Client
 	panelIPCertificateProbe func(context.Context, string, [sha256.Size]byte) error
 	firewallFS              fs.FS
+	swapProcPath            string
+	swapFstabPath           string
 }
 
 type APIError struct {
@@ -89,6 +92,8 @@ func Open(root, version string) (*App, error) {
 	a.NginxProbe = probeNginx
 	a.panelIPCertificateProbe = probePanelIPCertificate
 	a.firewallFS = os.DirFS("/")
+	a.swapProcPath = "/proc/swaps"
+	a.swapFstabPath = "/etc/fstab"
 	a.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = a.Root
@@ -120,6 +125,10 @@ func Open(root, version string) (*App, error) {
 	}
 	a.registerServerFiles()
 	a.registerServerFirewall()
+	if err := a.registerServerSwap(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	a.Mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := a.DB.PingContext(r.Context()); err != nil {
 			WriteError(w, 503, "database_unavailable", "数据库不可用")

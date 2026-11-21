@@ -34,3 +34,9 @@ test('已注册页面显示对应标题', async () => {
     expect(pageTitle(route)).toBe(`${title} · LPanel`)
   }
 })
+
+test('交换空间可从独立地址打开', async () => {
+  const route = await open('/server/swap')
+  expect(route.path).toBe('/server/swap')
+  expect(pageTitle(route)).toBe('交换空间 · LPanel')
+})
