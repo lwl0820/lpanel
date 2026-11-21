@@ -9,10 +9,16 @@ ask() {
 }
 # 按变量是否设置区分省略参数和显式空值。
 unset repository archive username password panel_port domain login_path auto_cert agree_tos email acme_provider acme_eab_file eab_kid eab_hmac_key
+archive_requested=n
 while (($#)); do
   case "$1" in
     --repository|--archive|--username|--password|--port|--domain|--login-path|--auto-cert|--email|--acme-provider|--acme-eab-file)
-      (($# >= 2)) && [[ "$2" != --* ]] || fail "$1 缺少参数值"
+      if (($# < 2)) || [[ "$2" == --* ]]; then
+        [[ -t 0 ]] || fail "$1 缺少参数值"
+        if [[ "$1" == --archive ]]; then archive_requested=y; fi
+        shift
+        continue
+      fi
       case "$1" in
         --repository) repository="$2" ;;
         --archive) archive="$2" ;;
@@ -47,7 +53,8 @@ while (($#)); do
   --acme-eab-file <路径>    ZeroSSL 凭据文件，两行依次为 Key ID 和 HMAC 密钥
   --help                    显示帮助
 
-省略的配置会按安装方式提示输入。直接传入的密码可能出现在进程列表和终端历史中。
+在终端安装时，省略选项或只写选项名不填值，脚本会按安装方式提示补全。
+直接传入的密码可能出现在进程列表和终端历史中。
 HELP
       exit 0 ;;
     *) fail "未知参数：$1" ;;
@@ -154,6 +161,9 @@ if [[ -n "$login_path" ]]; then
 fi
 if [[ ! -v repository && -n "${LPANEL_REPOSITORY:-}" ]]; then
   repository="$LPANEL_REPOSITORY"
+fi
+if [[ "$archive_requested" == y && ! -v archive ]]; then
+  ask archive '本地发行包路径' ''
 fi
 if [[ -v archive ]]; then
   [[ -f "$archive" && -f "$archive.sha256" ]] || fail '本地发行包或对应 .sha256 文件不存在'

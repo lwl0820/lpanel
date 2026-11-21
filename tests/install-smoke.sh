@@ -110,7 +110,7 @@ rm /etc/nginx/nginx.conf
 if printf 'admin\ntest-password\ntest-password\n8443\n' | PORT_CONFLICT=1 bash /source/deploy/install.sh --archive "$archive" > /work/.tmp/port-result 2>&1; then exit 13; fi
 grep -q '已被占用' /work/.tmp/port-result
 [[ ! -e /opt/lpanel/data/config.json ]]
-# 使用伪终端选择证书默认值，签发失败时保留自定义登录路径。
+# 使用伪终端补齐省略和未填值的选项，签发失败时保留自定义登录路径。
 FAIL_CERT=1 python3 - "$archive" > /work/.tmp/cert-result 2>&1 <<'PY'
 import os
 import pty
@@ -120,10 +120,11 @@ import sys
 master, terminal = pty.openpty()
 try:
     process = subprocess.Popen([
-        "bash", "/source/deploy/install.sh", "--archive", sys.argv[1],
-        "--password", "test-password", "--port", "8443",
+        "bash", "/source/deploy/install.sh", "--archive",
+        "--password", "--port", "8443", "--login-path",
     ], stdin=terminal)
-    os.write(master, b"mixed-admin\nPANEL.example.com\n\n\n\n\n/recovery/entry\n")
+    answers = f"mixed-admin\ntest-password\ntest-password\nPANEL.example.com\n\n\n\n\n/recovery/entry\n{sys.argv[1]}\n"
+    os.write(master, answers.encode())
     sys.exit(process.wait(timeout=60))
 finally:
     os.close(terminal)
@@ -131,6 +132,7 @@ finally:
 PY
 grep -q '证书提供商.*\[letsencrypt\]' /work/.tmp/cert-result
 grep -q '面板登录路径' /work/.tmp/cert-result
+grep -q '本地发行包路径' /work/.tmp/cert-result
 grep -q '证书未启用' /work/.tmp/cert-result
 grep -Fxq '面板安装完成，访问地址：http://192.0.2.10:8443/recovery/entry' /work/.tmp/cert-result
 grep -q 'http://127\.0\.0\.1:18080/api/v1/health$' /opt/lpanel/.tmp/curl-arguments

@@ -70,26 +70,26 @@ unset panel_password
 curl -fsSL https://raw.githubusercontent.com/lwl0820/lpanel/main/deploy/install.sh -o lpanel-install.sh && bash lpanel-install.sh --repository lwl0820/lpanel
 ```
 
-脚本会下载并校验适合服务器架构的最新正式发行包，只询问当前安装方式所需的缺项。
+脚本会下载并校验适合服务器架构的最新正式发行包。在终端执行时，可以只传已确定的选项；省略选项或只写选项名不填值，脚本会按需提示补全。
 
-**无人值守安装（域名 + HTTPS）**：先将自己的域名解析到服务器，开放公网 80 端口和面板端口，并在当前 Shell 中设置 `LPANEL_PASSWORD`（8 至 72 字节）。阅读 [Let’s Encrypt 服务条款](https://letsencrypt.org/repository/) 后，将示例域名和联系邮箱换成自己的，再运行：
+**使用参数安装（域名 + HTTPS）**：先将自己的域名解析到服务器，开放公网 80 端口和面板端口。阅读 [Let’s Encrypt 服务条款](https://letsencrypt.org/repository/) 后，将示例域名和联系邮箱换成自己的，再运行：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lwl0820/lpanel/main/deploy/install.sh -o lpanel-install.sh &&
   bash lpanel-install.sh \
     --repository lwl0820/lpanel \
     --username admin \
-    --password="$LPANEL_PASSWORD" \
+    --password \
     --port 8443 \
     --login-path /my-entry \
     --domain panel.example.com \
     --auto-cert y \
     --acme-provider letsencrypt \
     --agree-tos \
-    --email acme@example.com </dev/null
+    --email acme@example.com
 ```
 
-通过参数传入的密码可能出现在进程列表中。手动安装时可去掉 `--password` 和 `</dev/null`，按提示隐藏输入密码。
+上面的命令会提示你输入并确认管理员密码，输入时不会显示。需要无人值守安装时，可将 `--password` 改为 `--password="$LPANEL_PASSWORD"`，并提前设置该变量（8 至 72 字节）。通过参数传入的密码可能出现在进程列表中。
 
 - 使用服务器地址访问：改为 `--domain '' --auto-cert n`，去掉 `--acme-provider`、`--agree-tos` 和 `--email`。
 - 使用 ZeroSSL 签发证书：阅读 [ZeroSSL 服务条款](https://zerossl.com/legal/terms)，将提供商改为 `--acme-provider zerossl`，并加上 `--acme-eab-file /路径/zerossl-eab`。文件两行依次填写 Key ID 和 HMAC 密钥，仅允许管理员读取。

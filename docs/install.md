@@ -29,7 +29,7 @@ sudo bash deploy/install.sh --archive /服务器路径/lpanel_v0.1.0_linux_amd64
 
 ## 命令行参数
 
-可以按需传入参数。脚本只询问当前安装方式需要且尚未提供的配置。执行 `bash deploy/install.sh --help` 可查看用法。
+在终端安装时，可以省略选项或只写选项名不填值。脚本只询问当前安装方式需要且尚未提供的配置。显式传入空字符串（例如 `--domain ''`）不算缺值。执行 `bash deploy/install.sh --help` 可查看用法。
 
 | 参数 | 用途 |
 | --- | --- |
