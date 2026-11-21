@@ -7,6 +7,7 @@
 | [基础运行契约](./runtime-contract.md) | CLI、API 会话、配置和操作状态 |
 | [网站、项目、证书与升级](./hosting-contract.md) | 业务托管、部署、卸载和发布 |
 | [宿主机文件管理](./server-files.md) | 管理员文件接口、代理上传和文本读写 |
+| [宿主机防火墙](./server-firewall.md) | UFW 启用条件、入站规则与代理地址 |
 | [目录结构](./directory-structure.md) | 应用组装、业务文件与测试位置 |
 | [数据库](./database-guidelines.md) | SQLite 查询、表初始化和回滚 |
 | [错误处理](./error-handling.md) | 接口错误、长操作与生效检查 |

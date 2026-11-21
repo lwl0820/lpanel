@@ -126,6 +126,10 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .head h1 { font-size: var(--t-xl); }
 .head p { color: var(--muted); margin-top: 4px; max-width: 60ch; }
 .head .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.server-nav { display: flex; flex-wrap: wrap; gap: 8px; }
+.server-nav a { padding: 6px 12px; border-radius: var(--r-sm); color: var(--muted); }
+.server-nav a:hover { background: var(--surface); color: var(--fg); text-decoration: none; }
+.server-nav a[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 
 /* 按钮：Element Plus 按钮 + 图标；无边框的图标按钮 */
 .el-button > span { display: inline-flex; align-items: center; gap: 6px; }
@@ -220,6 +224,39 @@ td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
   .file-table .file-size { grid-column: 2; white-space: normal; overflow-wrap: anywhere; }
   .file-size-unit { display: inline; }
   .file-table .file-time { grid-column: 3; text-align: right; }
+}
+.firewall-heading { flex-wrap: wrap; }
+.firewall-note { justify-content: flex-start; overflow-wrap: anywhere; }
+.firewall-rules { container-type: inline-size; }
+.firewall-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 12px; border-bottom: 1px solid var(--line); }
+.firewall-form .el-form-item { margin-bottom: 0; }
+.firewall-table-region { max-block-size: min(65vh, 42rem); }
+.firewall-table-region:focus-visible { outline-offset: -2px; }
+.firewall-table { border-collapse: separate; border-spacing: 0; }
+.firewall-table thead { position: sticky; inset-block-start: 0; z-index: 1; }
+.firewall-table thead th:first-child { width: 46%; }
+.firewall-table thead th:last-child { text-align: right; }
+.firewall-table td, .firewall-table th.firewall-rule-name { overflow-wrap: anywhere; }
+.firewall-table .firewall-rule-name { background: var(--surface); color: var(--fg); font-size: inherit; white-space: normal; }
+.firewall-table tbody tr:last-child > .firewall-rule-name { border-bottom: 0; }
+.firewall-cell-label { display: none; }
+@container (width < 40rem) {
+  .firewall-table { position: relative; display: block; }
+  /* 保留窄屏表格的列标题语义，重复的可见标签不再朗读。 */
+  .firewall-table thead { position: absolute; inset: 0 auto auto 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .firewall-table tbody { display: block; }
+  .firewall-table tbody tr { display: grid; gap: 6px; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+  .firewall-table tbody tr:last-child { border-bottom: 0; }
+  .firewall-table tbody td, .firewall-table th.firewall-rule-name { padding: 0; border: 0; }
+  .firewall-table tbody tr:hover td { background: transparent; }
+  .firewall-table tbody td:not(.actions) { display: grid; grid-template-columns: 6em minmax(0, 1fr); gap: 8px; }
+  .firewall-table td.actions { width: auto; text-align: start; }
+  .firewall-cell-label { display: inline; color: var(--muted); }
+}
+@container (width < 29rem) {
+  .firewall-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .firewall-form .el-form-item:first-child { grid-column: 1 / -1; }
+  .firewall-form > .el-button { grid-column: 1 / -1; }
 }
 .project-delete-directory { display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--warn-soft); }
 .project-delete-directory > code { overflow-wrap: anywhere; }

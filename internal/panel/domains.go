@@ -351,7 +351,7 @@ func (a *App) ApplyNginx(ctx context.Context) error {
 	defer a.domainsMu.Unlock()
 	return a.applyNginx(ctx)
 }
-func (a *App) renderNginx(items []Binding, marker string, config Config, challengeHost string) string {
+func (a *App) renderNginx(items []Binding, marker string, config Config, challengeHost, clientAddr string) string {
 	var out strings.Builder
 	acme := fmt.Sprintf("location ^~ /.well-known/acme-challenge/ { root %q; default_type text/plain; }\n", filepath.Join(a.Root, "acme-webroot"))
 	proxy := fmt.Sprintf("proxy_pass http://%s; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-LPanel-Proxy 1;", config.Listen)
@@ -413,6 +413,8 @@ func (a *App) renderNginx(items []Binding, marker string, config Config, challen
 		out.WriteString(acme)
 		switch b.Kind {
 		case "panel":
+			// 只有启用操作消费实际入口地址。老代理一律覆盖 Host 为不带端口的 $host。
+			fmt.Fprintf(&out, "location = %s/enable { proxy_pass http://%s; proxy_set_header Host $host:$server_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-LPanel-Proxy 2; proxy_set_header X-LPanel-Client-IP %s; proxy_set_header X-LPanel-Server-IP $server_addr; proxy_set_header X-LPanel-Redirect \"\"; }\n", firewallAPI, config.Listen, clientAddr)
 			// 上传交给已鉴权的后端流式读取，避免代理先把整个文件写入临时目录。
 			fmt.Fprintf(&out, "location = /api/v1/server/files/upload { client_max_body_size 0; proxy_request_buffering off; proxy_http_version 1.1; %s proxy_set_header X-LPanel-Redirect \"\"; }\n", proxy)
 			// 文本按解码后的字节数限制；JSON 转义后的请求可能更大。
@@ -486,7 +488,14 @@ func (a *App) applyNginxBindings(ctx context.Context, config Config, items []Bin
 			config.HTTPS = b.CertificateStatus == "enabled"
 		}
 	}
-	if err := os.WriteFile(path, []byte(a.renderNginx(items, marker, config, challengeHost)), 0644); err != nil {
+	clientAddr := "\"\""
+	if version, err := a.Command(ctx, "nginx", "-V"); err == nil {
+		clientAddr = "$remote_addr"
+		if slices.Contains(strings.Fields(string(version)), "--with-http_realip_module") {
+			clientAddr = "$realip_remote_addr"
+		}
+	}
+	if err := os.WriteFile(path, []byte(a.renderNginx(items, marker, config, challengeHost, clientAddr)), 0644); err != nil {
 		return err
 	}
 	restore := func() error {

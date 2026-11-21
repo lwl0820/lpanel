@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	_ "modernc.org/sqlite"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 type App struct {
 	domainsMu  sync.Mutex
 	configMu   sync.RWMutex
+	firewallMu sync.Mutex
 	Root       string
 	Config     Config
 	Version    string
@@ -30,6 +32,7 @@ type App struct {
 	zeroSSLClient           *http.Client
 	panelIPACMEHTTPClient   *http.Client
 	panelIPCertificateProbe func(context.Context, string, [sha256.Size]byte) error
+	firewallFS              fs.FS
 }
 
 type APIError struct {
@@ -85,10 +88,14 @@ func Open(root, version string) (*App, error) {
 	a.zeroSSLClient = &http.Client{Timeout: 8 * time.Second}
 	a.NginxProbe = probeNginx
 	a.panelIPCertificateProbe = probePanelIPCertificate
+	a.firewallFS = os.DirFS("/")
 	a.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = a.Root
 		cmd.Env = append(os.Environ(), "TMPDIR="+filepath.Join(a.Root, ".tmp"))
+		if name == "ufw" {
+			cmd.Env = append(cmd.Env, "LC_ALL=C", "LANGUAGE=C")
+		}
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return out, fmt.Errorf("%s 执行失败：%w", name, err)
@@ -112,6 +119,7 @@ func Open(root, version string) (*App, error) {
 		return nil, err
 	}
 	a.registerServerFiles()
+	a.registerServerFirewall()
 	a.Mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := a.DB.PingContext(r.Context()); err != nil {
 			WriteError(w, 503, "database_unavailable", "数据库不可用")

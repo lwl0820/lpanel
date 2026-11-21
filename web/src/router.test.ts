@@ -21,6 +21,11 @@ test('服务器管理默认打开文件管理', async () => {
   expect(route.path).toBe('/server/files')
   expect(pageTitle(route)).toBe('文件管理 · LPanel')
 })
+test('防火墙可从独立地址打开', async () => {
+  const route = await open('/server/firewall')
+  expect(route.path).toBe('/server/firewall')
+  expect(pageTitle(route)).toBe('防火墙 · LPanel')
+})
 test('已注册页面显示对应标题', async () => {
   const titles: Record<string, string> = { '/': '概览', '/projects': '容器项目', '/sites': '静态网站', '/domains': '域名与证书', '/domains/acme-accounts': 'ACME 账户管理', '/settings': '面板设置' }
   for (const [path, title] of Object.entries(titles)) {

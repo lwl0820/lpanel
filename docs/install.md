@@ -140,6 +140,14 @@ sudo systemctl status lpanel-renew.timer
 
 若从旧版升级后，小文件能上传，但超过 1 MiB 的文件提示过大，可运行 `sudo /opt/lpanel/current/lpanel setup-nginx --root /opt/lpanel` 重新生成面板的 Nginx 配置，再重试上传。若面板前另有反向代理，也要检查该代理的上传限制。
 
+### 管理本机防火墙
+
+在「服务器管理 → 防火墙」可查看 UFW 状态、启停防火墙，以及添加或删除单个 TCP、UDP 入站端口规则。停用时看到的是下次启用生效的规则。本机允许入站不等于云安全组或外层代理已经放行。
+
+面板不会安装、替换或自动启用防火墙。服务器没有其他防火墙管理程序、且你决定使用 UFW 时，可在 Debian 或 Ubuntu 终端运行 `sudo apt install ufw`，随后回到面板刷新。已经使用其他工具管理规则的服务器，请继续使用原工具。
+
+从旧版升级后，先运行 `sudo /opt/lpanel/current/lpanel setup-nginx --root /opt/lpanel` 更新代理配置。启用时会按当前面板端口检查入站规则；已有来源限制不会自动扩大，遇到无法确认的规则会保留停用状态。面板前另有代理时，以实际连接到本机的代理地址为准。
+
 ## 安装脚本验证
 
 ```bash

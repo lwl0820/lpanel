@@ -8,6 +8,7 @@ export const routes: RouteRecordRaw[] = [
   { path: '/domains/acme-accounts', component: () => import('./views/AcmeAccountsView.vue'), meta: { title: 'ACME 账户管理' } },
   { path: '/server', redirect: '/server/files' },
   { path: '/server/files', component: () => import('./views/ServerFilesView.vue'), meta: { title: '文件管理' } },
+  { path: '/server/firewall', component: () => import('./views/ServerFirewallView.vue'), meta: { title: '防火墙' } },
   { path: '/settings', component: () => import('./views/SettingsView.vue'), meta: { title: '面板设置' } },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
