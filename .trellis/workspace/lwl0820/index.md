@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-11-22
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~523 | Active |
+| `journal-1.md` | ~553 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-11-22 | 单容器启停和本地镜像管理 | `b571a7e` | `main` |
 | 17 | 2026-11-22 | 交付服务器状态监控 | `3380fd3` | `main` |
 | 16 | 2026-11-21 | 面板命令行管理和公网 IP HTTPS | `a41d6cf` | `main` |
 | 15 | 2026-11-21 | 容器项目列表、单容器日志与文件清理 | `e50a051` | `main` |
