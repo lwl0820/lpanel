@@ -13,15 +13,40 @@ import (
 const monitorHistoryRetention = 30 * 24 * time.Hour
 
 func (a *App) registerMonitorHistory() error {
-	_, err := a.DB.Exec(`CREATE TABLE IF NOT EXISTS server_monitor_samples (
+	ctx := context.Background()
+	conn, err := a.DB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("连接服务器监控历史库失败：%w", err)
+	}
+	defer conn.Close()
+	// 在检查列之前取得写锁，避免并发启动时两个事务同时尝试升级旧表。
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("启动服务器监控历史表迁移失败：%w", err)
+	}
+	defer conn.ExecContext(ctx, "ROLLBACK")
+
+	_, err = conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS server_monitor_samples (
 		at INTEGER PRIMARY KEY,
 		cpu_percent REAL,
 		memory_used_bytes INTEGER NOT NULL,
 		memory_total_bytes INTEGER NOT NULL,
-		disks TEXT NOT NULL
+		disks TEXT NOT NULL,
+		load_average TEXT
 	)`)
 	if err != nil {
 		return fmt.Errorf("初始化服务器监控历史表失败：%w", err)
+	}
+	var hasLoadAverage bool
+	if err := conn.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pragma_table_info('server_monitor_samples') WHERE name='load_average')").Scan(&hasLoadAverage); err != nil {
+		return fmt.Errorf("检查服务器监控历史表失败：%w", err)
+	}
+	if !hasLoadAverage {
+		if _, err := conn.ExecContext(ctx, "ALTER TABLE server_monitor_samples ADD COLUMN load_average TEXT"); err != nil {
+			return fmt.Errorf("升级服务器监控历史表失败：%w", err)
+		}
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("提交服务器监控历史表迁移失败：%w", err)
 	}
 	a.Mux.Handle("GET /api/v1/server/monitor/history", a.RequireAuth(http.HandlerFunc(a.monitorHistory)))
 	return nil
@@ -58,12 +83,21 @@ func (a *App) storeMonitorSample(ctx context.Context, sample monitorSample) erro
 	if err != nil {
 		return err
 	}
+	var loadAverage *string
+	if sample.LoadAverage != nil {
+		data, err := json.Marshal(sample.LoadAverage)
+		if err != nil {
+			return err
+		}
+		loadAverage = new(string(data))
+	}
 	_, err = a.DB.ExecContext(ctx, `
-		INSERT INTO server_monitor_samples (at, cpu_percent, memory_used_bytes, memory_total_bytes, disks)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO server_monitor_samples (at, cpu_percent, memory_used_bytes, memory_total_bytes, disks, load_average)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(at) DO UPDATE SET cpu_percent=excluded.cpu_percent,
 			memory_used_bytes=excluded.memory_used_bytes, memory_total_bytes=excluded.memory_total_bytes,
-			disks=excluded.disks`, sample.At, sample.CPUPercent, sample.MemoryUsedBytes, sample.MemoryTotalBytes, string(disks))
+			disks=excluded.disks, load_average=excluded.load_average`,
+		sample.At, sample.CPUPercent, sample.MemoryUsedBytes, sample.MemoryTotalBytes, string(disks), loadAverage)
 	return err
 }
 
@@ -95,7 +129,7 @@ func (a *App) monitorHistory(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) loadMonitorHistory(ctx context.Context, from, to int64) ([]monitorSample, error) {
 	rows, err := a.DB.QueryContext(ctx, `
-		SELECT at, cpu_percent, memory_used_bytes, memory_total_bytes, disks
+		SELECT at, cpu_percent, memory_used_bytes, memory_total_bytes, disks, load_average
 		FROM server_monitor_samples WHERE at BETWEEN ? AND ? ORDER BY at`, from, to)
 	if err != nil {
 		return nil, err
@@ -105,12 +139,18 @@ func (a *App) loadMonitorHistory(ctx context.Context, from, to int64) ([]monitor
 	for rows.Next() {
 		var sample monitorSample
 		var disks string
-		if err := rows.Scan(&sample.At, &sample.CPUPercent, &sample.MemoryUsedBytes, &sample.MemoryTotalBytes, &disks); err != nil {
+		var loadAverage *string
+		if err := rows.Scan(&sample.At, &sample.CPUPercent, &sample.MemoryUsedBytes, &sample.MemoryTotalBytes, &disks, &loadAverage); err != nil {
 			return nil, err
 		}
 		sample.Disks = []monitorDisk{}
 		if err := json.Unmarshal([]byte(disks), &sample.Disks); err != nil {
 			return nil, err
+		}
+		if loadAverage != nil {
+			if err := json.Unmarshal([]byte(*loadAverage), &sample.LoadAverage); err != nil {
+				return nil, err
+			}
 		}
 		samples = append(samples, sample)
 	}

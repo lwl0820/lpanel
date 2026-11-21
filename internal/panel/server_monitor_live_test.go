@@ -1,8 +1,10 @@
 package panel
 
 import (
+	"encoding/json/v2"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -22,6 +24,58 @@ func TestServerMonitorLiveCPUAndMountParsing(t *testing.T) {
 	want := []monitorMount{{id: 20, path: "/"}, {id: 21, path: `/data disk\dir`}}
 	if !slices.Equal(mounts, want) {
 		t.Fatalf("本地磁盘挂载点错误：%+v", mounts)
+	}
+}
+
+func TestServerMonitorLiveCPUInfoAndLoad(t *testing.T) {
+	const info = `processor : 0
+model name : 测试 CPU
+physical id : 0
+core id : 0
+
+processor : 1
+physical id : 0
+core id : 0
+
+processor : 2
+physical id : 1
+core id : 0
+`
+	model, cores := parseMonitorCPUInfo(info, 3)
+	if model != "测试 CPU" || cores == nil || *cores != 2 {
+		t.Fatalf("多插槽拓扑解析错误：%q，%v", model, cores)
+	}
+	model, cores = parseMonitorCPUInfo("Processor : 测试 ARM CPU\nprocessor : 0\nCPU part : 0xd03", 1)
+	if model != "测试 ARM CPU" || cores != nil {
+		t.Fatalf("缺失拓扑时的型号或核数错误：%q，%v", model, cores)
+	}
+	load := parseMonitorLoadAverage("0.00 1.50 2.25 1/100 123")
+	if load == nil || *load != [3]float64{0, 1.5, 2.25} || parseMonitorLoadAverage("0.00 1.50 NaN") != nil {
+		t.Fatalf("负载解析错误：%v", load)
+	}
+}
+
+func TestServerMonitorLiveCPUModelFallback(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	script := filepath.Join(dir, "lscpu")
+	if err := os.WriteFile(script, []byte(`#!/bin/sh
+[ "$LC_ALL" = C ] || exit 1
+[ ! -t 1 ] || exit 1
+printf 'Model: 0x0
+  Model name: Cortex-A72
+'`), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if model := readMonitorCPUModel(); model != "Cortex-A72" {
+		t.Fatalf("CPU 型号回退结果错误：%q", model)
+	}
+	if err := os.Remove(script); err != nil {
+		t.Fatal(err)
+	}
+	if model := readMonitorCPUModel(); model != "" {
+		t.Fatalf("无法执行 lscpu 时应返回空型号：%q", model)
 	}
 }
 
@@ -63,6 +117,29 @@ func TestServerMonitorLiveReopen(t *testing.T) {
 		w := call(a, http.MethodGet, "/api/v1/server/monitor"+path, "", nil)
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("未登录访问 %s 返回 %d", path, w.Code)
+		}
+	}
+
+	login := call(a, http.MethodPost, "/api/v1/auth/login", `{"username":"管理员","password":"test-password"}`, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("登录失败：%s", login.Body)
+	}
+	w := call(a, http.MethodGet, "/api/v1/server/monitor/summary", "", login.Result().Cookies()[0])
+	var summary map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	_, modelOK := summary["cpu_model"].(string)
+	logical, logicalOK := summary["cpu_logical_count"].(float64)
+	core, coreOK := summary["cpu_core_count"]
+	load, loadOK := summary["load_average"].([]any)
+	if w.Code != http.StatusOK || !modelOK || !logicalOK || logical < 1 ||
+		!coreOK || !loadOK || len(load) != 3 {
+		t.Fatalf("整机摘要的 CPU 或负载字段错误（%d）：%s", w.Code, w.Body)
+	}
+	if core != nil {
+		if count, ok := core.(float64); !ok || count < 1 || count > logical {
+			t.Fatalf("整机摘要的物理核数错误：%v", core)
 		}
 	}
 

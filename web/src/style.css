@@ -466,6 +466,15 @@ td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
 /* 服务器监控 */
 .monitor-heading { flex-wrap: wrap; gap: 4px 12px; }
 .monitor-summary-time { margin: 12px 18px 0; font-size: var(--t-sm); }
+.monitor-processor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 14px 18px 0;
+  font-size: var(--t-sm);
+  overflow-wrap: anywhere;
+}
 .monitor-metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
@@ -477,6 +486,8 @@ td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
 .monitor-metrics dt { color: var(--muted); overflow-wrap: anywhere; }
 .monitor-metrics dd { margin: 4px 0 0; font-size: var(--t-xl); font-weight: 600; font-variant-numeric: tabular-nums; }
 .monitor-metrics dd span { font-size: var(--t-sm); color: var(--muted); font-weight: 400; }
+.monitor-load-values { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.monitor-load-values span { display: block; }
 .monitor-process-table { max-height: min(32rem, 65vh); overflow: auto; }
 .monitor-process-table table { border-collapse: separate; border-spacing: 0; min-width: max-content; }
 .monitor-process-table thead { position: sticky; top: 0; z-index: 1; }
@@ -517,12 +528,12 @@ td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
 .monitor-trends { display: grid; gap: 12px; }
 .monitor-trend { margin: 0; padding: 12px; min-width: 0; }
 .monitor-trend figcaption { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: space-between; margin-bottom: 8px; }
-.monitor-disk-trend { display: grid; gap: 6px; }
-.monitor-disk-trend > label { font-size: var(--t-sm); }
-.monitor-disk-trend .el-select { max-width: 20rem; }
-.monitor-trend, .monitor-disk-trend { background: var(--sunken); border-radius: var(--r-sm); }
-.monitor-disk-trend > :is(label, .el-select) { margin-inline: 12px; }
-.monitor-disk-trend > label { margin-top: 12px; }
+.monitor-trend-option { display: grid; gap: 6px; }
+.monitor-trend-option > label { font-size: var(--t-sm); }
+.monitor-trend-option .el-select { max-width: 20rem; }
+.monitor-trend, .monitor-trend-option { background: var(--sunken); border-radius: var(--r-sm); }
+.monitor-trend-option > :is(label, .el-select) { margin-inline: 12px; }
+.monitor-trend-option > label { margin-top: 12px; }
 .monitor-chart { display: grid; grid-template-columns: 2.8rem minmax(0, 1fr); align-items: stretch; }
 .monitor-chart-scale { display: flex; flex-direction: column; justify-content: space-between; font-size: var(--t-xs); }
 .monitor-chart canvas { display: block; width: 100%; height: 104px; }

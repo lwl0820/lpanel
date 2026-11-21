@@ -30,6 +30,8 @@ const historyOutdated = ref(false)
 const historyLoading = ref(true)
 const samples = shallowRef<MonitorSample[]>([])
 const diskMount = ref<string>()
+const loadWindows = [1, 5, 15]
+const loadWindow = ref(0)
 let historyRequest: AbortController | undefined
 
 async function loadHistory(nextRange = range.value, background = false) {
@@ -60,7 +62,7 @@ async function loadHistory(nextRange = range.value, background = false) {
   } catch (e) {
     if (request.signal.aborted) return
     if (background) historyOutdated.value = true
-    else historyError.value = errorText(e, '暂时无法读取历史用量')
+    else historyError.value = errorText(e, '暂时无法读取历史监控数据')
   } finally {
     if (historyRequest === request) {
       historyLoading.value = false
@@ -118,15 +120,19 @@ const diskMounts = computed(() => [...new Set(samples.value.flatMap(sample => sa
 const selectedDisk = computed(() => diskMount.value !== undefined && diskMounts.value.includes(diskMount.value)
   ? diskMount.value
   : diskMounts.value[0])
-const cpuPoints = computed(() => samples.value.map(s => ({ at: s.at, percent: s.cpu_percent })))
+const cpuPoints = computed(() => samples.value.map(s => ({ at: s.at, value: s.cpu_percent })))
 const memoryPoints = computed(() => samples.value.map(s => {
   const percent = usagePercent(s.memory_used_bytes, s.memory_total_bytes)
-  return { at: s.at, percent }
+  return { at: s.at, value: percent }
 }))
+const loadPoints = computed(() => samples.value.map(s => ({
+  at: s.at,
+  value: s.load_average?.[loadWindow.value] ?? null,
+})))
 const diskPoints = computed(() => samples.value.map(s => {
   const disk = s.disks.find(d => d.mount === selectedDisk.value)
   const percent = disk ? usagePercent(disk.used_bytes, disk.total_bytes) : null
-  return { at: s.at, percent }
+  return { at: s.at, value: percent }
 }))
 </script>
 
@@ -174,7 +180,14 @@ const diskPoints = computed(() => samples.value.map(s => {
         <div class="monitor-trends">
           <MonitorTrend title="CPU 使用率" :range="range" :points="cpuPoints"/>
           <MonitorTrend title="内存使用率" :range="range" :points="memoryPoints"/>
-          <div v-if="selectedDisk !== undefined" class="monitor-disk-trend">
+          <div class="monitor-trend-option">
+            <label for="monitor-history-load">平均时段</label>
+            <el-select id="monitor-history-load" v-model="loadWindow">
+              <el-option v-for="(minutes, index) in loadWindows" :key="minutes" :label="`${minutes} 分钟`" :value="index"/>
+            </el-select>
+            <MonitorTrend title="系统平均负载" :range="range" :points="loadPoints" raw/>
+          </div>
+          <div v-if="selectedDisk !== undefined" class="monitor-trend-option">
             <label for="monitor-history-disk">查看磁盘</label>
             <el-select id="monitor-history-disk" :model-value="selectedDisk" @update:model-value="diskMount = $event">
               <el-option v-for="mount in diskMounts" :key="mount" :label="mount === '/' ? '系统盘（/）' : mount" :value="mount"/>

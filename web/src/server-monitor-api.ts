@@ -9,11 +9,15 @@ export interface MonitorDisk {
 interface MonitorUsage {
   at: number
   cpu_percent: number | null
+  load_average: [number, number, number] | null
   memory_used_bytes: number
   memory_total_bytes: number
 }
 
 export interface MonitorSummary extends MonitorUsage {
+  cpu_model: string
+  cpu_core_count: number | null
+  cpu_logical_count: number
   root_disk: MonitorDisk | null
 }
 

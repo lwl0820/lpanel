@@ -4,8 +4,10 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -23,6 +25,10 @@ type monitorDisk struct {
 }
 
 type monitorSample struct {
+	LoadAverage      *[3]float64 `json:"load_average"`
+	cpuIDs           []string
+	cpuModel         string
+	cpuCoreCount     *int
 	At               int64         `json:"at"`
 	CPUPercent       *float64      `json:"cpu_percent"`
 	MemoryUsedBytes  uint64        `json:"memory_used_bytes"`
@@ -31,6 +37,10 @@ type monitorSample struct {
 }
 
 type monitorSummary struct {
+	CPUModel         string       `json:"cpu_model"`
+	CPULogicalCount  int          `json:"cpu_logical_count"`
+	CPUCoreCount     *int         `json:"cpu_core_count"`
+	LoadAverage      *[3]float64  `json:"load_average"`
 	At               int64        `json:"at"`
 	CPUPercent       *float64     `json:"cpu_percent"`
 	MemoryUsedBytes  uint64       `json:"memory_used_bytes"`
@@ -90,7 +100,8 @@ func (a *App) registerMonitorLive() {
 			return
 		}
 		summary := monitorSummary{
-			At: sample.At, CPUPercent: sample.CPUPercent,
+			At: sample.At, CPUPercent: sample.CPUPercent, LoadAverage: sample.LoadAverage,
+			CPUModel: sample.cpuModel, CPULogicalCount: len(sample.cpuIDs), CPUCoreCount: sample.cpuCoreCount,
 			MemoryUsedBytes: sample.MemoryUsedBytes, MemoryTotalBytes: sample.MemoryTotalBytes,
 		}
 		for _, disk := range sample.Disks {
@@ -136,6 +147,17 @@ func (state *monitorLiveState) readSample() (monitorSample, error) {
 	sample, err := readMonitorSample(&state.cpu)
 	if err != nil {
 		return monitorSample{}, err
+	}
+	sample.cpuModel, sample.cpuCoreCount = state.sample.cpuModel, state.sample.cpuCoreCount
+	if state.sampleReadAt.IsZero() || !slices.Equal(sample.cpuIDs, state.sample.cpuIDs) {
+		info, _ := os.ReadFile("/proc/cpuinfo")
+		sample.cpuModel, sample.cpuCoreCount = parseMonitorCPUInfo(string(info), len(sample.cpuIDs))
+		if sample.cpuModel == "" {
+			sample.cpuModel = readMonitorCPUModel()
+		}
+		if sample.cpuCoreCount == nil && len(sample.cpuIDs) > 0 {
+			sample.cpuCoreCount = readMonitorCoreCount(sample.cpuIDs)
+		}
 	}
 	state.sample, state.sampleReadAt = sample, time.Now()
 	return sample, nil
@@ -190,10 +212,112 @@ func readMonitorSample(previous *monitorCPUCounter) (monitorSample, error) {
 		}
 	}
 	*previous = current
+	var cpuIDs []string
+	_, perCPU, _ := strings.Cut(string(stat), "\n")
+	for line := range strings.SplitSeq(perCPU, "\n") {
+		label, _, _ := strings.Cut(line, " ")
+		id, ok := strings.CutPrefix(label, "cpu")
+		if !ok || id == "" {
+			break
+		}
+		cpuIDs = append(cpuIDs, id)
+	}
+	load, _ := os.ReadFile("/proc/loadavg")
 	return monitorSample{
+		cpuIDs: cpuIDs, LoadAverage: parseMonitorLoadAverage(string(load)),
 		At: at, CPUPercent: cpuPercent, MemoryTotalBytes: *total,
 		MemoryUsedBytes: *total - min(*total, *available), Disks: disks,
 	}, nil
+}
+
+func parseMonitorLoadAverage(data string) *[3]float64 {
+	fields := strings.Fields(data)
+	if len(fields) < 3 {
+		return nil
+	}
+	var load [3]float64
+	for i := range load {
+		value, err := strconv.ParseFloat(fields[i], 64)
+		if err != nil || value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil
+		}
+		load[i] = value
+	}
+	return &load
+}
+
+func parseMonitorCPUInfo(data string, logicalCount int) (string, *int) {
+	var model, processor string
+	cores := make(map[[2]int]struct{})
+	known := 0
+	for block := range strings.SplitSeq(data, "\n\n") {
+		var logicalCPU bool
+		socket, core := -1, -1
+		for line := range strings.SplitSeq(block, "\n") {
+			name, value, _ := strings.Cut(line, ":")
+			value = strings.TrimSpace(value)
+			switch strings.TrimSpace(name) {
+			case "model name":
+				model = cmp.Or(model, value)
+			case "Processor":
+				processor = cmp.Or(processor, value)
+			case "processor":
+				logicalCPU = true
+			case "physical id":
+				if id, err := strconv.Atoi(value); err == nil {
+					socket = id
+				}
+			case "core id":
+				if id, err := strconv.Atoi(value); err == nil {
+					core = id
+				}
+			}
+		}
+		if logicalCPU && socket >= 0 && core >= 0 {
+			cores[[2]int{socket, core}] = struct{}{}
+			known++
+		}
+	}
+	model = cmp.Or(model, processor)
+	if known > 0 && known == logicalCount {
+		return model, new(len(cores))
+	}
+	return model, nil
+}
+
+func readMonitorCPUModel() string {
+	cmd := exec.Command("lscpu")
+	cmd.Env = append(cmd.Environ(), "LC_ALL=C")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for line := range strings.SplitSeq(string(output), "\n") {
+		name, value, _ := strings.Cut(line, ":")
+		if strings.TrimSpace(name) == "Model name" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func readMonitorCoreCount(cpuIDs []string) *int {
+	cores := make(map[string]struct{})
+	for _, id := range cpuIDs {
+		topology := filepath.Join("/sys/devices/system/cpu", "cpu"+id, "topology")
+		// 缺少物理插槽编号时，内核可能使用默认的单线程兄弟列表。
+		packageID, err := os.ReadFile(filepath.Join(topology, "physical_package_id"))
+		socket, parseErr := strconv.Atoi(strings.TrimSpace(string(packageID)))
+		if err != nil || parseErr != nil || socket < 0 {
+			return nil
+		}
+		siblings, err := os.ReadFile(filepath.Join(topology, "core_cpus_list"))
+		if err != nil || len(strings.TrimSpace(string(siblings))) == 0 {
+			return nil
+		}
+		cores[string(siblings)] = struct{}{}
+	}
+	return new(len(cores))
 }
 
 func parseMonitorCPU(stat string) (monitorCPUCounter, error) {

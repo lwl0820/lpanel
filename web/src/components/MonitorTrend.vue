@@ -6,7 +6,8 @@ import type { MonitorRange } from '../server-monitor-api'
 const props = defineProps<{
   title: string
   range: MonitorRange
-  points: { at: number; percent: number | null }[]
+  points: { at: number; value: number | null }[]
+  raw?: boolean
 }>()
 
 const canvas = useTemplateRef('canvas')
@@ -23,16 +24,28 @@ watch(canvas, (element, _, onCleanup) => {
 })
 const lastPoint = computed(() => {
   for (let i = props.points.length - 1; i >= 0; i--) {
-    if (props.points[i].percent !== null) return props.points[i]
+    if (props.points[i].value !== null) return props.points[i]
   }
   return undefined
 })
+
+const scaleMax = computed(() => {
+  if (!props.raw) return 100
+  const peak = props.points.reduce((max, { value }) => Math.max(max, value ?? 0), 0)
+  if (peak === 0) return 1
+  const step = Math.max(0.01, 10 ** Math.floor(Math.log10(peak / 2)))
+  return 2 * step * Math.ceil(peak / (2 * step))
+})
+const scaleLabels = computed(() => [scaleMax.value, scaleMax.value / 2, 0].map(value => props.raw
+  ? value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+  : formatPercent(value)))
 
 watchEffect(() => {
   const element = canvas.value
   const w = width.value
   const { from, to } = props.range
   const points = props.points
+  const max = scaleMax.value
   if (!element || !w) return
   const ctx = element.getContext('2d')
   if (!ctx) return
@@ -53,13 +66,13 @@ watchEffect(() => {
   ctx.lineWidth = 1.5
   ctx.beginPath()
   let previousAt = -Infinity
-  for (const { at, percent } of points) {
-    if (percent === null) {
+  for (const { at, value } of points) {
+    if (value === null) {
       previousAt = -Infinity
       continue
     }
     const x = 2 + (at - from) / (to - from) * (w - 4)
-    const y = height - 2 - percent / 100 * (height - 4)
+    const y = height - 2 - value / max * (height - 4)
     // 每分钟采一次，允许少量时间偏差，孤立样本用小点标明。
     if (at - previousAt > 90) {
       ctx.moveTo(x, y)
@@ -77,11 +90,13 @@ watchEffect(() => {
   <figure class="monitor-trend">
     <figcaption>
       <strong>{{ title }}</strong>
-      <span v-if="lastPoint" class="muted">最后记录 {{ formatPercent(lastPoint.percent) }}</span>
+      <span v-if="lastPoint?.value != null" class="muted">最后记录 {{ raw ? lastPoint.value.toFixed(2) : formatPercent(lastPoint.value) }}</span>
     </figcaption>
     <template v-if="lastPoint">
       <div class="monitor-chart">
-        <div class="monitor-chart-scale muted" aria-hidden="true"><span>100%</span><span>50%</span><span>0%</span></div>
+        <div class="monitor-chart-scale muted" aria-hidden="true">
+          <span v-for="label in scaleLabels" :key="label">{{ label }}</span>
+        </div>
         <canvas ref="canvas" role="img" :aria-label="`${title}趋势`"></canvas>
       </div>
       <div class="monitor-chart-time muted"><time>{{ fromLabel }}</time><time>{{ toLabel }}</time></div>
