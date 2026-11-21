@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"限定采样、保留边界和隔离服务器的验证范围。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核对首页摘要、进程列表和历史时段显示。"}

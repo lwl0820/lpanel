@@ -1,0 +1,33 @@
+{
+  "id": "server-management",
+  "name": "server-management",
+  "title": "服务器管理",
+  "description": "在面板内管理本机文件、防火墙、交换空间、时区与时间同步及 DNS，并监控宿主机资源和进程；按六个子任务独立验收。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lwl0820",
+  "assignee": "lwl0820",
+  "createdAt": "2026-11-22",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "11-22-server-files",
+    "11-22-server-firewall",
+    "11-22-server-swap",
+    "11-22-server-time",
+    "11-22-server-dns",
+    "11-22-server-monitor"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "限定模块检查，区分命令替身与隔离环境实测。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查受影响页面的类型、导航与实际交互。"}

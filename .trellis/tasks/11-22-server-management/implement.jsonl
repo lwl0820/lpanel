@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/runtime-contract.md", "reason": "沿用管理员会话、宿主机配置和操作状态约定。"}
+{"file": ".trellis/spec/frontend/api-contract.md", "reason": "核对前端请求、操作结果与错误提示。"}
