@@ -499,3 +499,25 @@
 ### Next Steps
 
 - 在真实公网和 systemd 环境验收 Let’s Encrypt 签发和续期。
+
+
+## Session 17: 交付服务器状态监控
+<!-- trellis-session: v=2 fp=51fc2d77d526ce8e -->
+
+**Date**: 2026-11-22
+**Task**: 交付服务器状态监控
+**Branch**: `main`
+
+### Summary
+
+首页显示整机资源摘要。详情提供各磁盘用量、实时进程排序和最近 30 天的分钟趋势。在 Ubuntu 隔离机核对后台采样、重启留存、停机断线、到期清理和手机布局，验收记录见 docs/validation.md。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3380fd3` | feat: 增加服务器状态监控 |
+
+### Status
+
+[OK] **Completed**
