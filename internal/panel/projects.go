@@ -232,7 +232,7 @@ func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
 		return a.runProjectAction(ctx, p, "deploy", false)
 	})
 	if err != nil {
-		result.DeploymentError = "配置已保存，暂时无法开始部署。请打开「编辑配置」重新保存后重试。"
+		result.DeploymentError = "配置已保存，暂时无法开始部署。请点击「编辑」并重新保存以重试。"
 	} else {
 		result.Operation = new(op)
 	}

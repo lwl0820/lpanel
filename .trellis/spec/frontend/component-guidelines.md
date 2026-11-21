@@ -32,7 +32,7 @@ if (await track(op, `部署 ${item.name}`, `${item.name} 部署完成`)) await l
 - 例外：面板升级仍在 `UpgradePanel` 里每 3 秒轮询，因为升级期间请求失败表示面板正在重启，需要显示“重新连接”而不是报错。
 
 ## 列表与表单
-- 列表用 `.panel` 内的 `table.rtable`，单元格带 `data-label`，760px 以下自动变卡片。常用操作直接显示，其余放进 `RowMenu`。项目列表直接显示启停、重启和编辑配置，窄屏允许换行。
+- 列表用 `.panel` 内的 `table.rtable`，单元格带 `data-label`，760px 以下自动变卡片。常用操作直接显示，其余放进 `RowMenu`。项目列表直接显示启停、重启和「编辑」按钮，窄屏允许换行。
 - 表单用 `el-form`、`label-position="top"` 和校验规则；文字字段的规则用 `trigger: ['blur', 'change']`，改正后错误立即消失。
 - 对话框 `width="min(520px, calc(100vw - 32px))"`、`append-to-body`；抽屉 `size="min(720px, 100vw)"`、`class="app-drawer"`。
 - 删除、解除绑定先用危险操作确认。容器项目删除使用含文件清理选项的对话框，默认焦点落在「取消」。只需文字确认时使用 `ElMessageBox.confirm`，确认按钮 `confirmButtonClass: 'el-button--danger'`。

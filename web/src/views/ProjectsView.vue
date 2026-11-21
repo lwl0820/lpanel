@@ -254,7 +254,7 @@ const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.nam
                       <AppIcon :name="hasActiveContainer ? 'stop' : 'play'"/>{{ hasActiveContainer ? '停止' : '启动' }}
                     </el-button>
                     <el-button size="small" :disabled="busy || !containers.length" @click="action(item, 'restart')"><AppIcon name="restart"/>重启</el-button>
-                    <el-button size="small" :disabled="busy" @click="edit(item)"><AppIcon name="edit"/>编辑配置</el-button>
+                    <el-button size="small" :disabled="busy" @click="edit(item)"><AppIcon name="edit"/>编辑</el-button>
                     <RowMenu :items="menu(item)" :label="item.name" :disabled="busy"/>
                   </span>
                 </td>
