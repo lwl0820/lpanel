@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/hosting-contract.md", "reason": "核对当前改动涉及的接口、错误处理与交互要求"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对当前改动涉及的接口、错误处理与交互要求"}
+{"file": ".trellis/spec/frontend/api-contract.md", "reason": "核对当前改动涉及的接口、错误处理与交互要求"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "核对当前改动涉及的接口、错误处理与交互要求"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核对当前改动涉及的接口、错误处理与交互要求"}
