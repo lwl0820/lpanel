@@ -14,21 +14,23 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type App struct {
-	domainsMu  sync.Mutex
-	configMu   sync.RWMutex
-	firewallMu sync.Mutex
-	swapMu     sync.Mutex
-	Root       string
-	Config     Config
-	Version    string
-	DB         *sql.DB
-	Mux        *http.ServeMux
-	Command    func(context.Context, string, ...string) ([]byte, error)
-	NginxProbe func(context.Context, string, string, string) error
+	domainsMu    sync.Mutex
+	configMu     sync.RWMutex
+	firewallMu   sync.Mutex
+	swapMu       sync.Mutex
+	serverTimeMu sync.Mutex
+	Root         string
+	Config       Config
+	Version      string
+	DB           *sql.DB
+	Mux          *http.ServeMux
+	Command      func(context.Context, string, ...string) ([]byte, error)
+	NginxProbe   func(context.Context, string, string, string) error
 
 	zeroSSLClient           *http.Client
 	panelIPACMEHTTPClient   *http.Client
@@ -36,6 +38,8 @@ type App struct {
 	firewallFS              fs.FS
 	swapProcPath            string
 	swapFstabPath           string
+	serverTimeSyncMarker    string
+	serverTimeSyncRunning   atomic.Bool
 }
 
 type APIError struct {
@@ -94,6 +98,7 @@ func Open(root, version string) (*App, error) {
 	a.firewallFS = os.DirFS("/")
 	a.swapProcPath = "/proc/swaps"
 	a.swapFstabPath = "/etc/fstab"
+	a.serverTimeSyncMarker = "/run/systemd/timesync/synchronized"
 	a.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = a.Root
@@ -125,6 +130,7 @@ func Open(root, version string) (*App, error) {
 	}
 	a.registerServerFiles()
 	a.registerServerFirewall()
+	a.registerServerTime()
 	if err := a.registerServerSwap(); err != nil {
 		_ = db.Close()
 		return nil, err

@@ -40,3 +40,9 @@ test('交换空间可从独立地址打开', async () => {
   expect(route.path).toBe('/server/swap')
   expect(pageTitle(route)).toBe('交换空间 · LPanel')
 })
+
+test('时区与时间同步可从独立地址打开', async () => {
+  const route = await open('/server/time')
+  expect(route.path).toBe('/server/time')
+  expect(pageTitle(route)).toBe('时区与时间同步 · LPanel')
+})

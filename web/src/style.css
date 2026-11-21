@@ -449,3 +449,9 @@ td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
   .swap-table td.actions .row-act { flex-wrap: wrap; justify-content: flex-start; }
   .swap-cell-label { display: inline; color: var(--muted); }
 }
+
+.server-time-settings { display: grid; gap: 12px; }
+.server-time-settings .el-form-item, .server-time-settings p { margin: 0; }
+.server-time-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.server-time-controls .el-select { width: min(280px, 100%); }
+.server-clock { font-variant-numeric: tabular-nums; }
