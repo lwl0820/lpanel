@@ -13,7 +13,14 @@ const user = ref<User | null>(null)
 const loading = ref(true)
 const submitting = ref(false)
 const error = ref('')
-const navigation: { path: string; label: string; icon: IconName }[] = [ { path: '/', label: '概览', icon: 'overview' }, { path: '/projects', label: '容器项目', icon: 'projects' }, { path: '/sites', label: '静态网站', icon: 'sites' }, { path: '/domains', label: '域名与证书', icon: 'domains' }, { path: '/settings', label: '面板设置', icon: 'settings' } ]
+const navigation: { path: string; label: string; shortLabel?: string; icon: IconName }[] = [
+  { path: '/', label: '概览', icon: 'overview' },
+  { path: '/projects', label: '容器项目', icon: 'projects' },
+  { path: '/sites', label: '静态网站', icon: 'sites' },
+  { path: '/domains', label: '域名与证书', shortLabel: '域名', icon: 'domains' },
+  { path: '/server', label: '服务器管理', shortLabel: '服务器', icon: 'server' },
+  { path: '/settings', label: '面板设置', icon: 'settings' },
+]
 watchEffect(() => { document.title = user.value ? pageTitle(route) : LOGIN_TITLE })
 onMounted(async () => {
   try {
@@ -57,7 +64,11 @@ async function logout() {
   <div v-else class="app">
     <aside class="side">
       <RouterLink class="brand" to="/"><AppIcon name="logo"/>LPanel</RouterLink>
-      <nav class="nav" aria-label="主导航"><RouterLink v-for="item in navigation" :key="item.path" :to="item.path" :class="{ active: route.path.startsWith(`${item.path}/`) }" active-class="" exact-active-class="active"><AppIcon :name="item.icon"/><span>{{ item.label }}</span></RouterLink></nav>
+      <nav class="nav" aria-label="主导航">
+        <RouterLink v-for="item in navigation" :key="item.path" :to="item.path" :aria-label="item.label" :class="{ active: route.path.startsWith(`${item.path}/`) }" active-class="" exact-active-class="active">
+          <AppIcon :name="item.icon"/><span :class="{ 'nav-full': item.shortLabel }">{{ item.label }}</span><span v-if="item.shortLabel" class="nav-short">{{ item.shortLabel }}</span>
+        </RouterLink>
+      </nav>
       <div class="side-foot"><span class="avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span><span class="who">{{ user.username }}<span>管理员</span></span><button type="button" class="icon-btn" aria-label="退出登录" title="退出登录" @click="logout"><AppIcon name="logout"/></button></div>
     </aside>
     <div class="main-col">

@@ -138,6 +138,8 @@ sudo systemctl status lpanel-renew.timer
 
 版本更新通过面板的设置页检查并发起。发行版切换使用 `current` 指针，持久化配置与数据库位于独立的 `data/` 中，不随程序覆盖。
 
+若从旧版升级后，小文件能上传，但超过 1 MiB 的文件提示过大，可运行 `sudo /opt/lpanel/current/lpanel setup-nginx --root /opt/lpanel` 重新生成面板的 Nginx 配置，再重试上传。若面板前另有反向代理，也要检查该代理的上传限制。
+
 ## 安装脚本验证
 
 ```bash

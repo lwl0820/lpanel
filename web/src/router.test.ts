@@ -16,6 +16,11 @@ test('专用登录入口保留浏览器路径', async () => {
   expect(router.currentRoute.value.fullPath).toBe('/private/login?from=bookmark')
   expect(router.currentRoute.value.matched).toHaveLength(1)
 })
+test('服务器管理默认打开文件管理', async () => {
+  const route = await open('/server')
+  expect(route.path).toBe('/server/files')
+  expect(pageTitle(route)).toBe('文件管理 · LPanel')
+})
 test('已注册页面显示对应标题', async () => {
   const titles: Record<string, string> = { '/': '概览', '/projects': '容器项目', '/sites': '静态网站', '/domains': '域名与证书', '/domains/acme-accounts': 'ACME 账户管理', '/settings': '面板设置' }
   for (const [path, title] of Object.entries(titles)) {

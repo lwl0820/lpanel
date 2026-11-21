@@ -413,6 +413,10 @@ func (a *App) renderNginx(items []Binding, marker string, config Config, challen
 		out.WriteString(acme)
 		switch b.Kind {
 		case "panel":
+			// 上传交给已鉴权的后端流式读取，避免代理先把整个文件写入临时目录。
+			fmt.Fprintf(&out, "location = /api/v1/server/files/upload { client_max_body_size 0; proxy_request_buffering off; proxy_http_version 1.1; %s proxy_set_header X-LPanel-Redirect \"\"; }\n", proxy)
+			// 文本按解码后的字节数限制；JSON 转义后的请求可能更大。
+			fmt.Fprintf(&out, "location = /api/v1/server/files/text { client_max_body_size 7m; %s proxy_set_header X-LPanel-Redirect \"\"; }\n", proxy)
 			out.WriteString("location = /.lpanel/config { default_type text/plain; ")
 			if config.LoginPath != "" {
 				fmt.Fprintf(&out, "if ($remote_addr != %s) { return 404; } ", panelLoopback(b.Domain))
