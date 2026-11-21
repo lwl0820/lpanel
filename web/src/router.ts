@@ -11,6 +11,7 @@ export const routes: RouteRecordRaw[] = [
   { path: '/server/firewall', component: () => import('./views/ServerFirewallView.vue'), meta: { title: '防火墙' } },
   { path: '/server/swap', component: () => import('./views/ServerSwapView.vue'), meta: { title: '交换空间' } },
   { path: '/server/time', component: () => import('./views/ServerTimeView.vue'), meta: { title: '时区与时间同步' } },
+  { path: '/server/dns', component: () => import('./views/ServerDNSView.vue'), meta: { title: 'DNS 设置' } },
   { path: '/settings', component: () => import('./views/SettingsView.vue'), meta: { title: '面板设置' } },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]

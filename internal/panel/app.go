@@ -24,6 +24,7 @@ type App struct {
 	firewallMu   sync.Mutex
 	swapMu       sync.Mutex
 	serverTimeMu sync.Mutex
+	serverDNSMu  sync.Mutex
 	Root         string
 	Config       Config
 	Version      string
@@ -39,6 +40,7 @@ type App struct {
 	swapProcPath            string
 	swapFstabPath           string
 	serverTimeSyncMarker    string
+	serverDNSHostRoot       string
 	serverTimeSyncRunning   atomic.Bool
 }
 
@@ -98,12 +100,13 @@ func Open(root, version string) (*App, error) {
 	a.firewallFS = os.DirFS("/")
 	a.swapProcPath = "/proc/swaps"
 	a.swapFstabPath = "/etc/fstab"
+	a.serverDNSHostRoot = "/"
 	a.serverTimeSyncMarker = "/run/systemd/timesync/synchronized"
 	a.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = a.Root
 		cmd.Env = append(os.Environ(), "TMPDIR="+filepath.Join(a.Root, ".tmp"))
-		if name == "ufw" {
+		if name == "ufw" || name == "resolvectl" {
 			cmd.Env = append(cmd.Env, "LC_ALL=C", "LANGUAGE=C")
 		}
 		out, err := cmd.CombinedOutput()
@@ -131,6 +134,7 @@ func Open(root, version string) (*App, error) {
 	a.registerServerFiles()
 	a.registerServerFirewall()
 	a.registerServerTime()
+	a.registerServerDNS()
 	if err := a.registerServerSwap(); err != nil {
 		_ = db.Close()
 		return nil, err

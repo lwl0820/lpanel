@@ -455,3 +455,10 @@ td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
 .server-time-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .server-time-controls .el-select { width: min(280px, 100%); }
 .server-clock { font-variant-numeric: tabular-nums; }
+
+.server-dns-settings { display: grid; gap: 12px; }
+.server-dns-settings p { margin: 0; }
+.server-dns-settings .el-form { display: grid; justify-items: start; gap: 8px; }
+.server-dns-settings .el-form-item { width: min(440px, 100%); margin: 0; }
+.server-dns-addresses { margin: 0; padding-inline-start: 1.25em; overflow-wrap: anywhere; }
+.server-dns-field-error { color: var(--el-color-danger); }

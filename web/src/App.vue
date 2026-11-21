@@ -80,6 +80,7 @@ async function logout() {
             <RouterLink to="/server/firewall">防火墙</RouterLink>
             <RouterLink to="/server/swap">交换空间</RouterLink>
             <RouterLink to="/server/time">时区与时间同步</RouterLink>
+            <RouterLink to="/server/dns">DNS 设置</RouterLink>
           </nav>
           <RouterView/>
         </div>

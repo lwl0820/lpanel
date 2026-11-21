@@ -46,3 +46,9 @@ test('时区与时间同步可从独立地址打开', async () => {
   expect(route.path).toBe('/server/time')
   expect(pageTitle(route)).toBe('时区与时间同步 · LPanel')
 })
+
+test('DNS 设置可从独立地址打开', async () => {
+  const route = await open('/server/dns')
+  expect(route.path).toBe('/server/dns')
+  expect(pageTitle(route)).toBe('DNS 设置 · LPanel')
+})
