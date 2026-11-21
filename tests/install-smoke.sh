@@ -123,7 +123,7 @@ try:
         "bash", "/source/deploy/install.sh", "--archive",
         "--password", "--port", "8443", "--login-path",
     ], stdin=terminal)
-    answers = f"mixed-admin\ntest-password\ntest-password\nPANEL.example.com\n\n\n\n\n/recovery/entry\n{sys.argv[1]}\n"
+    answers = f"mixed-admin\ntest-password\ntest-password\nPANEL.abc.example.com\n\n\n\n\n/recovery/entry\n{sys.argv[1]}\n"
     os.write(master, answers.encode())
     sys.exit(process.wait(timeout=60))
 finally:
@@ -141,7 +141,7 @@ if grep -q '访问地址：https://' /work/.tmp/cert-result; then exit 18; fi
 [[ -f /opt/lpanel/data/config.json ]]
 grep -q -- '--username mixed-admin --port 8443' /opt/lpanel/.tmp/cli-arguments
 grep -q -- '--login-path /recovery/entry$' /opt/lpanel/.tmp/cli-arguments
-grep -Fxq -- 'bind-panel --root /opt/lpanel --domain panel.example.com --auto-cert --agree-tos --email acme@panel.example.com' /opt/lpanel/.tmp/cli-arguments
+grep -Fxq -- 'bind-panel --root /opt/lpanel --domain panel.abc.example.com --auto-cert --agree-tos --email acme@example.com' /opt/lpanel/.tmp/cli-arguments
 rm -rf /opt/lpanel
 # 自定义端口用于健康检查，首次探测失败后安静重试。关闭标准输入并保留密码原文。
 cli_password=' leading $pass\!?# '

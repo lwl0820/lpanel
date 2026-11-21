@@ -49,7 +49,7 @@ while (($#)); do
   --auto-cert <y或n>        有域名时是否自动申请 HTTPS 证书。交互默认 y
   --acme-provider <名称>    证书提供商，letsencrypt（默认）或 zerossl
   --agree-tos               同意证书服务条款。交互默认 y
-  --email <邮箱>            证书联系邮箱，交互默认 acme@面板域名。可传入空串
+  --email <邮箱>            证书联系邮箱，交互默认 acme@域名最后两段。可传入空串
   --acme-eab-file <路径>    ZeroSSL 凭据文件，两行依次为 Key ID 和 HMAC 密钥
   --help                    显示帮助
 
@@ -129,7 +129,11 @@ if [[ "$auto_cert" == y ]]; then
   esac
   [[ -v agree_tos ]] || ask agree_tos '是否同意证书服务条款？y/n' y
   [[ "${agree_tos,,}" == y ]] || fail '申请证书需要同意服务条款'
-  [[ -v email ]] || ask email '证书联系邮箱' "acme@$domain"
+  if [[ ! -v email ]]; then
+    email_domain="${domain%.*}"
+    email_domain="${email_domain##*.}.${domain##*.}"
+    ask email '证书联系邮箱' "acme@$email_domain"
+  fi
   if [[ "$acme_provider" == zerossl ]]; then
     if [[ -v acme_eab_file ]]; then
       [[ -f "$acme_eab_file" ]] && mapfile -t eab_credentials < "$acme_eab_file" || fail '无法读取 ZeroSSL 凭据文件'

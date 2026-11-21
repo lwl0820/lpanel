@@ -43,7 +43,7 @@ sudo bash deploy/install.sh --archive /服务器路径/lpanel_v0.1.0_linux_amd64
 | `--auto-cert y\|n` | 有域名时设置是否申请 HTTPS 证书。交互默认值为 `y`。 |
 | `--acme-provider letsencrypt\|zerossl` | 选择证书提供商。直接回车接受 Let’s Encrypt。无人值守时省略此项也使用 Let’s Encrypt。 |
 | `--agree-tos` | 同意所选提供商的证书服务条款。交互默认值为 `y`。 [Let’s Encrypt 服务条款](https://letsencrypt.org/repository/) · [ZeroSSL 服务条款](https://zerossl.com/legal/terms) |
-| `--email <邮箱>` | 申请证书时的联系邮箱。交互默认值为 `acme@面板域名`，例如 `acme@panel.example.com`。`--email ''` 表示留空。 |
+| `--email <邮箱>` | 申请证书时的联系邮箱。交互默认使用面板域名最后两段，例如 `abc.xyz.com` 使用 `acme@xyz.com`。`--email ''` 表示留空。 |
 | `--acme-eab-file <路径>` | ZeroSSL 凭据文件。第一行填写 Key ID，第二行填写 HMAC 密钥。交互安装可按提示隐藏输入，无人值守时须提供文件。 [ZeroSSL 凭据获取说明](https://zerossl.com/documentation/acme#eab-credentials) |
 
 部署环境已将管理员密码设置为 Shell 变量 `LPANEL_PASSWORD` 时，可通过以下命令直接安装 HTTP 面板。
