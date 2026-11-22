@@ -40,41 +40,87 @@ elif [[ ! -L "$root/current" && ${#units[@]} -eq 0 && "$(readlink -- "$command_l
   exit 0
 fi
 
+project_cleanup() {
+  python3 - "$database" "$projects_dir" "$@" <<'PYTHON'
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+
+database, projects_dir = map(Path, sys.argv[1:3])
+preview = len(sys.argv) == 3
+if database.parent.is_symlink() or projects_dir.is_symlink():
+    sys.exit("项目数据目录含符号链接，请手动处理")
+with Path("/proc/self/mountinfo").open("rb") as mountinfo:
+    mount_targets = [
+        os.fsdecode(re.sub(rb"\\([0-7]{3})", lambda match: bytes([int(match[1], 8)]), line.split()[4]))
+        for line in mountinfo
+    ]
+mode = "ro" if preview else "rw"
+with sqlite3.connect(f"{database.as_uri()}?mode={mode}", uri=True) as db:
+    columns = {row[1] for row in db.execute("PRAGMA table_info(projects)")}
+    directory_column = "directory" if "directory" in columns else "id"
+    projects = []
+    for project_id, name, directory in db.execute(
+        f"SELECT id, name, {directory_column} FROM projects ORDER BY name, id"
+    ):
+        if not re.fullmatch(r"[0-9a-f]{24}", project_id):
+            sys.exit(f"发现无效的面板项目 ID：{project_id!r}")
+        if not directory or directory in (".", "..") or "/" in directory or "\x00" in directory:
+            sys.exit(f"项目 {name!r} 的目录名无效：{directory!r}")
+        project = projects_dir / directory
+        if project.is_symlink() or not all((project / file).is_file() for file in ("compose.yaml", ".env")):
+            sys.exit(f"项目 {name!r} 的目录或配置不可用：{str(project)!r}")
+        for mount_target in mount_targets:
+            if mount_target == str(project) or mount_target.startswith(f"{project}/"):
+                sys.exit(f"项目 {name!r} 下有宿主机挂载点，请先卸载该挂载点：{mount_target!r}")
+        projects.append((project_id, directory))
+        if preview:
+            print(f"  {name!r}  {str(project)!r}", file=sys.stderr)
+
+    project_list = json.dumps(projects)
+    if preview:
+        print(project_list)
+        sys.exit(0)
+    with os.fdopen(3) as confirmed:
+        if project_list != confirmed.read().rstrip("\n"):
+            sys.exit("待清理的项目或目录已变化，请重新运行卸载脚本确认")
+
+    for project_id, directory in projects:
+        project = projects_dir / directory
+        try:
+            subprocess.run(
+                ["docker", "compose", "--project-name", f"lpanel-{project_id}",
+                 "--project-directory", str(project), "--env-file", str(project / ".env"),
+                 "-f", str(project / "compose.yaml"), "down", "--remove-orphans"],
+                cwd=database.parent.parent, check=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            sys.exit(f"无法停止并移除项目容器和网络，已保留项目目录 {str(project)!r}：{error}")
+        try:
+            db.execute("DELETE FROM bindings WHERE json_extract(payload, '$.kind') = 'project' "
+                       "AND json_extract(payload, '$.resource_id') = ?", (project_id,))
+            db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            shutil.rmtree(project)
+            db.commit()
+        except (OSError, sqlite3.Error) as error:
+            sys.exit(f"无法删除项目目录或记录 {str(project)!r}：{error}")
+PYTHON
+}
+
 echo '卸载后，面板以及通过 LPanel 配置的业务域名将停止访问。'
 echo '管理员账号、数据库和证书保留，系统软件包及其他 Nginx 配置保留。'
 read -r -p '是否同时清理 LPanel 管理的 Compose 项目？[y/N]：' cleanup || exit 1
-project_ids=()
+project_list='[]'
 case "$cleanup" in
   y|Y)
-    [[ ! -L "$root/data" && ! -L "$projects_dir" ]] || fail '项目数据目录含符号链接，请手动处理'
     echo '以下项目的容器、项目网络和目录将被删除：'
-    if ! project_list="$(python3 - "$database" "$projects_dir" <<'PY'
-from pathlib import Path
-import re
-import sqlite3
-import sys
-
-database, projects_dir = map(Path, sys.argv[1:])
-with Path("/proc/self/mountinfo").open() as mountinfo:
-    mount_targets = [line.split()[4] for line in mountinfo]
-with sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True) as db:
-    for project_id, name in db.execute("SELECT id, name FROM projects ORDER BY name, id"):
-        if not re.fullmatch(r"[0-9a-f]{24}", project_id):
-            sys.exit(f"发现无效的面板项目 ID：{project_id!r}")
-        project = projects_dir / project_id
-        if project.is_symlink() or not all((project / file).is_file() for file in ("compose.yaml", ".env")):
-            sys.exit(f"项目 {name!r} 的目录或配置不可用：{project}")
-        for mount_target in mount_targets:
-            if mount_target == str(project) or mount_target.startswith(f"{project}/"):
-                sys.exit(f"项目 {name!r} 下有宿主机挂载点，请先卸载该挂载点：{mount_target}")
-        print(f"  {name!r}  {project}", file=sys.stderr)
-        print(project_id)
-PY
-)"; then
-      fail '无法读取待清理的 Compose 项目，请按上方提示处理后重试'
-    fi
-    if [[ -n "$project_list" ]]; then
-      mapfile -t project_ids <<< "$project_list"
+    project_list="$(project_cleanup)" || fail '无法读取待清理的 Compose 项目，请按上方提示处理后重试'
+    if [[ "$project_list" != '[]' ]]; then
       echo '项目目录内的数据会永久删除，包括相对路径挂载的数据。'
       echo '未挂载到卷或宿主机的容器内数据也会删除，Docker 卷、镜像和项目目录外的数据保留。'
     else
@@ -98,41 +144,9 @@ for unit in "${units[@]}"; do
   fi
 done
 
-if ((${#project_ids[@]})); then
-  if ! python3 - "$database" "$projects_dir" "${project_ids[@]}" <<'PY'
-from pathlib import Path
-import shutil
-import sqlite3
-import subprocess
-import sys
-
-database, projects_dir = map(Path, sys.argv[1:3])
-with sqlite3.connect(f"{database.as_uri()}?mode=rw", uri=True) as db:
-    for project_id in sys.argv[3:]:
-        project = projects_dir / project_id
-        if project.is_symlink():
-            sys.exit(f"项目目录是符号链接：{project}")
-        try:
-            subprocess.run(
-                ["docker", "compose", "--project-name", f"lpanel-{project_id}",
-                 "--project-directory", str(project), "--env-file", str(project / ".env"),
-                 "-f", str(project / "compose.yaml"), "down", "--remove-orphans"],
-                cwd=database.parent.parent, check=True,
-            )
-        except (OSError, subprocess.CalledProcessError) as error:
-            sys.exit(f"无法停止并移除项目容器和网络，已保留项目目录 {project}：{error}")
-        try:
-            db.execute("DELETE FROM bindings WHERE json_extract(payload, '$.kind') = 'project' "
-                       "AND json_extract(payload, '$.resource_id') = ?", (project_id,))
-            db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
-            shutil.rmtree(project)
-            db.commit()
-        except (OSError, sqlite3.Error) as error:
-            sys.exit(f"无法删除项目目录或记录 {project}：{error}")
-PY
-  then
-    fail 'Compose 项目清理未完成，面板程序已保留'
-  fi
+if [[ "$project_list" != '[]' ]]; then
+  # 标准输入提供 Python 脚本，文件描述符 3 传递已确认的项目清单。
+  project_cleanup apply 3<<< "$project_list" || fail 'Compose 项目清理未完成，面板程序已保留'
 fi
 
 if [[ -f "$nginx_conf" ]]; then

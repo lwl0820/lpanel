@@ -20,6 +20,8 @@ import (
 
 type App struct {
 	domainsMu    sync.Mutex
+	projectsMu   sync.Mutex
+	projectLocks map[string]*projectLock
 	configMu     sync.RWMutex
 	firewallMu   sync.Mutex
 	swapMu       sync.Mutex

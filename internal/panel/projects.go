@@ -5,8 +5,10 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -19,16 +21,20 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type Project struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Directory   string `json:"directory,omitempty"`
-	Compose     string `json:"compose,omitempty"`
-	Environment string `json:"environment,omitempty"`
-	UpdatedAt   string `json:"updated_at"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Directory       string `json:"directory,omitempty"`
+	Compose         string `json:"compose,omitempty"`
+	Environment     string `json:"environment,omitempty"`
+	UpdatedAt       string `json:"updated_at"`
+	LegacyDirectory bool   `json:"legacy_directory"`
 }
 type ProjectPort struct {
 	Service       string `json:"service"`
@@ -54,12 +60,74 @@ type ProjectContainer struct {
 	Publishers []ProjectPublisher `json:"Publishers"`
 }
 
+type projectLock struct {
+	mutex sync.Mutex
+	users int
+}
+
+// 同一项目的保存与后台操作串行，其他项目可在部署期间继续操作。
+func (a *App) lockProject(id string) func() {
+	a.projectsMu.Lock()
+	if a.projectLocks == nil {
+		a.projectLocks = make(map[string]*projectLock)
+	}
+	lock := a.projectLocks[id]
+	if lock == nil {
+		lock = &projectLock{}
+		a.projectLocks[id] = lock
+	}
+	lock.users++
+	a.projectsMu.Unlock()
+
+	lock.mutex.Lock()
+	return func() {
+		lock.mutex.Unlock()
+		a.projectsMu.Lock()
+		lock.users--
+		if lock.users == 0 {
+			delete(a.projectLocks, id)
+		}
+		a.projectsMu.Unlock()
+	}
+}
+
+func (a *App) migrateProjects() error {
+	tx, err := a.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS projects(
+		id TEXT PRIMARY KEY, name TEXT NOT NULL, compose TEXT NOT NULL, environment TEXT NOT NULL, updated_at TEXT NOT NULL,
+		directory TEXT NOT NULL, legacy_directory INTEGER NOT NULL DEFAULT 0
+	)`); err != nil {
+		return err
+	}
+	var hasDirectory bool
+	if err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name='directory')").Scan(&hasDirectory); err != nil {
+		return err
+	}
+	if !hasDirectory {
+		if _, err = tx.Exec(`
+			ALTER TABLE projects ADD COLUMN directory TEXT NOT NULL DEFAULT '';
+			ALTER TABLE projects ADD COLUMN legacy_directory INTEGER NOT NULL DEFAULT 0;
+			UPDATE projects SET directory=id, legacy_directory=1
+		`); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS projects_directory ON projects(directory)"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (a *App) RegisterProjectRoutes() error {
-	if _, err := a.DB.Exec(`CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,compose TEXT NOT NULL,environment TEXT NOT NULL,updated_at TEXT NOT NULL)`); err != nil {
+	if err := a.migrateProjects(); err != nil {
 		return err
 	}
 	a.Mux.Handle("GET /api/v1/projects", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rows, err := a.DB.QueryContext(r.Context(), "SELECT id,name,updated_at FROM projects ORDER BY name")
+		rows, err := a.DB.QueryContext(r.Context(), "SELECT id,name,directory,legacy_directory,updated_at FROM projects ORDER BY name")
 		if err != nil {
 			WriteError(w, 500, "project_error", "读取项目失败")
 			return
@@ -68,11 +136,12 @@ func (a *App) RegisterProjectRoutes() error {
 		items := []Project{}
 		for rows.Next() {
 			var p Project
-			if err = rows.Scan(&p.ID, &p.Name, &p.UpdatedAt); err != nil {
+			var directory string
+			if err = rows.Scan(&p.ID, &p.Name, &directory, &p.LegacyDirectory, &p.UpdatedAt); err != nil {
 				WriteError(w, 500, "project_error", "读取项目失败")
 				return
 			}
-			p.Directory = a.projectDirectory(p.ID)
+			p.Directory = a.projectDirectory(directory)
 			items = append(items, p)
 		}
 		if err = rows.Err(); err != nil {
@@ -96,19 +165,29 @@ func (a *App) RegisterProjectRoutes() error {
 		if !ReadJSON(w, r, &p) {
 			return
 		}
-		dir, err := os.MkdirTemp(filepath.Join(a.Root, ".tmp"), "compose-scan-")
-		if err != nil {
-			WriteError(w, 500, "scan_error", err.Error())
-			return
-		}
-		defer os.RemoveAll(dir)
+		p.Directory = ""
 		if p.ID != "" {
-			if _, err := a.project(r.Context(), p.ID); err != nil {
-				WriteError(w, 404, "not_found", "项目不存在")
+			unlock := a.lockProject(p.ID)
+			defer unlock()
+		}
+		if p.ID != "" || p.Name != "" {
+			a.projectsMu.Lock()
+			previous, status, code, err := a.prepareProject(r.Context(), &p, true)
+			a.projectsMu.Unlock()
+			if err != nil {
+				WriteError(w, status, code, err.Error())
 				return
 			}
+			if previous.Directory != "" {
+				// 改名前，配置引用的相对路径仍在原目录中。
+				p.Directory = previous.Directory
+				if err := a.checkProjectDirectory(p.Directory, true); err != nil {
+					WriteError(w, 400, "project_directory", err.Error())
+					return
+				}
+			}
 		}
-		ports, err := a.scanProject(r.Context(), p, dir)
+		ports, err := a.previewProject(r.Context(), p)
 		if err != nil {
 			WriteError(w, 400, "compose_error", err.Error())
 			return
@@ -130,7 +209,7 @@ func (a *App) RegisterProjectRoutes() error {
 		}
 		removeFiles := action == "delete" && r.URL.Query().Get("remove_files") == "true"
 		op, err := a.StartOperation("project_"+action, func(ctx context.Context) (string, error) {
-			return a.runProjectAction(ctx, p, action, removeFiles)
+			return a.runProjectAction(ctx, p.ID, action, removeFiles)
 		})
 		if err != nil {
 			WriteError(w, 500, "operation_error", err.Error())
@@ -169,60 +248,183 @@ func (a *App) RegisterProjectRoutes() error {
 	a.Mux.Handle("POST /api/v1/projects/{id}/bindings", a.RequireAuth(http.HandlerFunc(a.bindProject)))
 	return nil
 }
-func (a *App) projectDirectory(id string) string {
-	return filepath.Join(a.Root, "data/projects", id)
+func (a *App) projectDirectory(name string) string {
+	return filepath.Join(a.Root, "data/projects", name)
 }
+
 func (a *App) project(ctx context.Context, id string) (Project, error) {
 	var p Project
-	err := a.DB.QueryRowContext(ctx, "SELECT id,name,compose,environment,updated_at FROM projects WHERE id=?", id).Scan(&p.ID, &p.Name, &p.Compose, &p.Environment, &p.UpdatedAt)
+	var directory string
+	err := a.DB.QueryRowContext(ctx, "SELECT id,name,directory,legacy_directory,compose,environment,updated_at FROM projects WHERE id=?", id).
+		Scan(&p.ID, &p.Name, &directory, &p.LegacyDirectory, &p.Compose, &p.Environment, &p.UpdatedAt)
 	if err == nil {
-		p.Directory = a.projectDirectory(p.ID)
+		if !validProjectDirectoryName(directory) {
+			return p, fmt.Errorf("无法确认项目目录，请检查项目记录")
+		}
+		p.Directory = a.projectDirectory(directory)
 	}
 	return p, err
 }
+
+func validProjectDirectoryName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, "/\x00")
+}
+
+func (a *App) prepareProject(ctx context.Context, p *Project, scanning bool) (previous Project, status int, code string, err error) {
+	if p.ID != "" {
+		previous, err = a.project(ctx, p.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return previous, 404, "not_found", fmt.Errorf("项目不存在")
+		}
+		if err != nil {
+			return previous, 500, "project_error", err
+		}
+	}
+	if scanning && p.ID != "" && p.Name == "" {
+		p.Name = previous.Name
+	}
+	if p.Name != previous.Name || p.ID == "" {
+		p.Name = strings.TrimSpace(p.Name)
+	}
+	p.LegacyDirectory = previous.LegacyDirectory
+	p.Directory = previous.Directory
+	if p.Name != previous.Name || p.ID == "" {
+		if len(p.Name) < 1 || len(p.Name) > 100 {
+			return previous, 400, "invalid_name", fmt.Errorf("请输入 1 至 100 字节的项目名称")
+		}
+		if !p.LegacyDirectory {
+			if !validProjectDirectoryName(p.Name) {
+				return previous, 400, "invalid_name", fmt.Errorf("项目名称不能包含斜杠或空字符，也不能是「.」或「..」")
+			}
+			p.Directory = a.projectDirectory(p.Name)
+		}
+		var occupied bool
+		err = a.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM projects WHERE id<>? AND (name=? OR directory=?))",
+			p.ID, p.Name, filepath.Base(p.Directory)).Scan(&occupied)
+		if err != nil {
+			return previous, 500, "project_error", fmt.Errorf("检查项目名称失败：%w", err)
+		}
+		if occupied {
+			return previous, 409, "project_conflict", fmt.Errorf("该项目名称或目录已被使用，请更换项目名称")
+		}
+	}
+	if err = a.checkProjectDirectory(p.Directory, true); err != nil {
+		return previous, 400, "project_directory", err
+	}
+	if previous.ID != "" && p.Directory != previous.Directory {
+		entries, readErr := os.ReadDir(p.Directory)
+		if readErr == nil {
+			if len(entries) > 0 {
+				return previous, 409, "project_conflict", fmt.Errorf("新名称对应的目录中已有文件，无法合并，请更换项目名称")
+			}
+			if err = a.checkProjectDirectoryForRemoval(p.Directory); err != nil {
+				return previous, 400, "project_directory", err
+			}
+		} else if !errors.Is(readErr, os.ErrNotExist) {
+			return previous, 500, "project_error", readErr
+		}
+		if err = a.checkProjectDirectoryForRemoval(previous.Directory); err != nil {
+			return previous, 400, "project_directory", err
+		}
+	}
+	if p.ID == "" && strings.TrimSpace(p.Compose) == "" {
+		contents, e := readProjectFiles(p.Directory)
+		if e != nil {
+			return previous, 400, "compose_error", e
+		}
+		if strings.TrimSpace(string(contents[0])) == "" {
+			return previous, 400, "compose_error", fmt.Errorf("项目目录中没有可用的 compose.yaml，请填写 Compose 配置")
+		}
+		p.Compose, p.Environment = string(contents[0]), string(contents[1])
+	}
+	return previous, 0, "", nil
+}
+
 func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
 	var p Project
 	if !ReadJSON(w, r, &p) {
 		return
 	}
+	ctx := r.Context()
 	p.ID = r.PathValue("id")
-	p.Name = strings.TrimSpace(p.Name)
-	if p.Name == "" || len(p.Name) > 100 {
-		WriteError(w, 400, "invalid_name", "请输入不超过 100 字节的项目名称")
-		return
-	}
 	if p.ID != "" {
-		if _, err := a.project(r.Context(), p.ID); err != nil {
-			WriteError(w, 404, "not_found", "项目不存在")
-			return
-		}
-	} else {
-		raw := make([]byte, 12)
-		if _, err := rand.Read(raw); err != nil {
-			WriteError(w, 500, "project_error", err.Error())
-			return
-		}
-		p.ID = hex.EncodeToString(raw)
+		unlock := a.lockProject(p.ID)
+		defer unlock()
 	}
-	// 在候选目录验证，避免错误配置覆盖正在运行项目的文件。
-	candidate, err := os.MkdirTemp(filepath.Join(a.Root, ".tmp"), "compose-save-")
+	a.projectsMu.Lock()
+	defer a.projectsMu.Unlock()
+
+	previous, status, code, err := a.prepareProject(ctx, &p, false)
 	if err != nil {
-		WriteError(w, 500, "project_error", err.Error())
+		WriteError(w, status, code, err.Error())
 		return
 	}
-	defer os.RemoveAll(candidate)
-	if _, err = a.scanProject(r.Context(), p, candidate); err != nil {
+	if p.ID == "" {
+		var raw [12]byte
+		rand.Read(raw[:])
+		p.ID = hex.EncodeToString(raw[:])
+	}
+	renaming := previous.ID != "" && previous.Directory != p.Directory
+	originalDir := p.Directory
+	if renaming {
+		originalDir = previous.Directory
+	}
+	original, err := readProjectFiles(originalDir)
+	if err != nil {
+		WriteError(w, 400, "project_directory", err.Error())
+		return
+	}
+	target, statErr := os.Lstat(p.Directory)
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		WriteError(w, 500, "project_error", statErr.Error())
+		return
+	}
+	restoreDirectory := func() error {
+		if target == nil {
+			if err := os.Remove(p.Directory); !errors.Is(err, os.ErrNotExist) && !errors.Is(err, unix.ENOTEMPTY) {
+				return err
+			}
+		}
+		return nil
+	}
+	if renaming {
+		// Linux 可原子替换空目录，目标非空时则保留两边。
+		if err = unix.Rename(originalDir, p.Directory); err != nil {
+			WriteError(w, 500, "project_error", fmt.Sprintf("移动项目目录失败：%v", err))
+			return
+		}
+		restoreDirectory = func() error {
+			if err := os.Rename(p.Directory, originalDir); err != nil {
+				return err
+			}
+			if target != nil {
+				return os.Mkdir(p.Directory, target.Mode().Perm())
+			}
+			return nil
+		}
+	}
+	rollback := func(err error) error {
+		return errors.Join(err, setProjectFiles(p.Directory, original), restoreDirectory())
+	}
+	// 在部署目录校验，使 env_file、include 等相对引用与部署一致。
+	if err = a.writeProjectFiles(p, p.Directory); err != nil {
+		err = rollback(err)
+		WriteError(w, 400, "project_error", fmt.Sprintf("写入项目配置失败：%v", err))
+		return
+	}
+	if _, err = a.scanProject(ctx, p, p.Directory); err != nil {
+		err = rollback(err)
 		WriteError(w, 400, "compose_error", err.Error())
 		return
 	}
-	p.Directory = a.projectDirectory(p.ID)
-	if err = a.writeProjectFiles(p, p.Directory); err != nil {
-		WriteError(w, 500, "project_error", err.Error())
-		return
-	}
 	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if _, err = a.DB.ExecContext(r.Context(), "INSERT INTO projects(id,name,compose,environment,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,compose=excluded.compose,environment=excluded.environment,updated_at=excluded.updated_at", p.ID, p.Name, p.Compose, p.Environment, p.UpdatedAt); err != nil {
-		WriteError(w, 500, "project_error", "保存项目失败")
+	_, err = a.DB.ExecContext(ctx, `INSERT INTO projects(id,name,compose,environment,updated_at,directory,legacy_directory) VALUES(?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name,compose=excluded.compose,environment=excluded.environment,
+		updated_at=excluded.updated_at,directory=excluded.directory`,
+		p.ID, p.Name, p.Compose, p.Environment, p.UpdatedAt, filepath.Base(p.Directory), p.LegacyDirectory)
+	if err != nil {
+		err = rollback(err)
+		WriteError(w, 500, "project_error", fmt.Sprintf("保存项目失败：%v", err))
 		return
 	}
 	result := struct {
@@ -231,7 +433,7 @@ func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
 		DeploymentError string     `json:"deployment_error,omitempty"`
 	}{Project: p}
 	op, err := a.StartOperation("project_deploy", func(ctx context.Context) (string, error) {
-		return a.runProjectAction(ctx, p, "deploy", false)
+		return a.runProjectAction(ctx, p.ID, "deploy", false)
 	})
 	if err != nil {
 		result.DeploymentError = "配置已保存，暂时无法开始部署。请点击「编辑」并重新保存以重试。"
@@ -240,6 +442,45 @@ func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
 	}
 	WriteJSON(w, 200, result)
 }
+
+var projectConfigNames = [...]string{"compose.yaml", ".env"}
+
+func readProjectFiles(dir string) ([len(projectConfigNames)][]byte, error) {
+	var contents [len(projectConfigNames)][]byte
+	for i, name := range projectConfigNames {
+		path := filepath.Join(dir, name)
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return contents, err
+		}
+		if !info.Mode().IsRegular() {
+			return contents, fmt.Errorf("项目配置必须是普通文件：%s", path)
+		}
+		contents[i], err = os.ReadFile(path)
+		if err != nil {
+			return contents, err
+		}
+	}
+	return contents, nil
+}
+
+func setProjectFiles(dir string, contents [len(projectConfigNames)][]byte) error {
+	for i, name := range projectConfigNames {
+		path := filepath.Join(dir, name)
+		if contents[i] == nil {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		} else if err := os.WriteFile(path, contents[i], 0600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (a *App) writeProjectFiles(p Project, dir string) error {
 	if strings.TrimSpace(p.Compose) == "" {
 		return fmt.Errorf("Compose 配置不能为空")
@@ -247,23 +488,32 @@ func (a *App) writeProjectFiles(p Project, dir string) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(p.Compose), 0600); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, ".env"), []byte(p.Environment), 0600)
+	return setProjectFiles(dir, [len(projectConfigNames)][]byte{[]byte(p.Compose), []byte(p.Environment)})
 }
-func (a *App) scanProject(ctx context.Context, p Project, dir string) ([]ProjectPort, error) {
+
+func (a *App) previewProject(ctx context.Context, p Project) ([]ProjectPort, error) {
+	dir, err := os.MkdirTemp(filepath.Join(a.Root, ".tmp"), "compose-scan-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
 	if err := a.writeProjectFiles(p, dir); err != nil {
 		return nil, err
 	}
-	projectDir := dir
-	if p.ID != "" {
-		projectDir = a.projectDirectory(p.ID)
-		if err := os.MkdirAll(projectDir, 0700); err != nil {
-			return nil, err
-		}
+	return a.scanProject(ctx, p, dir)
+}
+
+func (a *App) scanProject(ctx context.Context, p Project, dir string) ([]ProjectPort, error) {
+	projectDir := cmp.Or(p.Directory, dir)
+	args := []string{"compose", "--project-name", "lpanel-" + cmp.Or(p.ID, "scan"), "--project-directory", projectDir, "--env-file", filepath.Join(dir, ".env"), "-f", filepath.Join(dir, "compose.yaml"), "config", "--format", "json"}
+	if dir != p.Directory {
+		// 端口插值使用候选 .env，服务的 env_file 在保存时用正式路径校验。
+		args = append(args, "--no-env-resolution")
 	}
-	out, err := a.Command(ctx, "docker", "compose", "--project-name", "lpanel-scan", "--project-directory", projectDir, "--env-file", filepath.Join(dir, ".env"), "-f", filepath.Join(dir, "compose.yaml"), "config", "--format", "json")
+	out, err := a.Command(ctx, "docker", args...)
+	if err != nil && dir != p.Directory && bytes.Contains(out, []byte("unknown flag: --no-env-resolution")) {
+		out, err = a.Command(ctx, "docker", args[:len(args)-1]...)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("Compose 配置校验失败：%s：%w", a.redactProjectOutput(p, string(out)), err)
 	}
@@ -347,7 +597,10 @@ func parseProjectPorts(data []byte) ([]ProjectPort, error) {
 	return items, nil
 }
 func (a *App) projectCommand(ctx context.Context, p Project, args ...string) ([]byte, error) {
-	dir := a.projectDirectory(p.ID)
+	dir := p.Directory
+	if err := a.checkProjectDirectory(dir, false); err != nil {
+		return nil, err
+	}
 	command := []string{"compose", "--project-name", "lpanel-" + p.ID, "--project-directory", dir, "--env-file", filepath.Join(dir, ".env"), "-f", filepath.Join(dir, "compose.yaml")}
 	command = append(command, args...)
 	out, err := a.Command(ctx, "docker", command...)
@@ -480,9 +733,16 @@ func projectUpstream(items []ProjectContainer, service string, port int, scheme 
 	}
 	return "", fmt.Errorf("目标服务没有可用的已发布 TCP 端口，请先部署并启动项目")
 }
-func (a *App) runProjectAction(ctx context.Context, p Project, action string, removeFiles bool) (string, error) {
+func (a *App) runProjectAction(ctx context.Context, id, action string, removeFiles bool) (string, error) {
+	unlock := a.lockProject(id)
+	defer unlock()
+	p, err := a.project(ctx, id)
+	if err != nil {
+		return "", err
+	}
+
 	if action == "delete" && removeFiles {
-		if err := a.checkProjectDirectoryForRemoval(p.ID); err != nil {
+		if err := a.checkProjectDirectoryForRemoval(p.Directory); err != nil {
 			return "", err
 		}
 	}
@@ -503,13 +763,34 @@ func (a *App) runProjectAction(ctx context.Context, p Project, action string, re
 				}
 			}
 		}
-		if removeFiles {
-			if err = os.RemoveAll(a.projectDirectory(p.ID)); err != nil {
-				return a.redactProjectOutput(p, string(out)), fmt.Errorf("删除项目文件失败：%w", err)
-			}
+		a.projectsMu.Lock()
+		defer a.projectsMu.Unlock()
+		log := a.redactProjectOutput(p, string(out))
+		tx, err := a.DB.BeginTx(ctx, nil)
+		if err != nil {
+			return log, err
 		}
-		_, err = a.DB.ExecContext(ctx, "DELETE FROM projects WHERE id=?", p.ID)
-		return a.redactProjectOutput(p, string(out)), err
+		defer tx.Rollback()
+		if _, err = tx.ExecContext(ctx, "DELETE FROM projects WHERE id=?", p.ID); err != nil {
+			return log, err
+		}
+		if removeFiles {
+			if err = os.RemoveAll(p.Directory); err != nil {
+				return log, fmt.Errorf("删除项目文件失败：%w", err)
+			}
+			return log, tx.Commit()
+		}
+		original, err := readProjectFiles(p.Directory)
+		if err != nil {
+			return log, err
+		}
+		if err = setProjectFiles(p.Directory, [len(projectConfigNames)][]byte{}); err == nil {
+			err = tx.Commit()
+		}
+		if err != nil {
+			err = errors.Join(err, setProjectFiles(p.Directory, original))
+		}
+		return log, err
 	}
 	if action == "deploy" || action == "start" || action == "restart" {
 		items, e := a.ProjectStatus(ctx, p)
@@ -540,19 +821,28 @@ func (a *App) runProjectAction(ctx context.Context, p Project, action string, re
 	}
 	return a.redactProjectOutput(p, string(out)), nil
 }
-func (a *App) checkProjectDirectoryForRemoval(id string) error {
-	if !filepath.IsLocal(id) || id == "." || id != filepath.Base(id) {
+func (a *App) checkProjectDirectory(dir string, allowMissing bool) error {
+	if filepath.Dir(dir) != a.projectDirectory("") || !validProjectDirectoryName(filepath.Base(dir)) {
 		return fmt.Errorf("无法确认项目目录，请检查项目记录")
 	}
-	dir := a.projectDirectory(id)
 	for _, path := range []string{filepath.Join(a.Root, "data"), filepath.Dir(dir), dir} {
 		info, err := os.Lstat(path)
+		if allowMissing && errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		if err != nil {
 			return fmt.Errorf("无法确认项目目录：%w", err)
 		}
 		if !info.IsDir() {
-			return fmt.Errorf("无法清理项目文件，所选位置必须是普通目录：%s", path)
+			return fmt.Errorf("项目所用位置必须是普通目录：%s", path)
 		}
+	}
+	return nil
+}
+
+func (a *App) checkProjectDirectoryForRemoval(dir string) error {
+	if err := a.checkProjectDirectory(dir, false); err != nil {
+		return err
 	}
 	// 面板根路径可能经过符号链接，挂载点按系统实际路径识别。
 	realDir, err := filepath.EvalSymlinks(dir)

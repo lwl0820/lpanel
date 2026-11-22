@@ -32,6 +32,10 @@ volumes:
   retained:
 `}
 	dir := filepath.Join(root, "data/projects", p.ID)
+	p.Directory = dir
+	if err := a.writeProjectFiles(p, dir); err != nil {
+		t.Fatal(err)
+	}
 	ports, err := a.scanProject(ctx, p, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -46,6 +50,13 @@ volumes:
 	if err := os.WriteFile(filepath.Join(localData, "data.txt"), []byte("相对路径挂载数据"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	_, err = a.DB.Exec(`
+		DROP TABLE projects;
+		CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,compose TEXT NOT NULL,environment TEXT NOT NULL,updated_at TEXT NOT NULL)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = a.DB.Exec("INSERT INTO projects VALUES(?,?,?,?,?)", p.ID, p.Name, p.Compose, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -54,12 +65,35 @@ volumes:
 		_, _ = a.projectCommand(context.Background(), p, "down", "--volumes")
 		_, _ = a.Command(context.Background(), "docker", "volume", "rm", "lpanel-"+p.ID+"_retained")
 	}()
-	if _, err = a.runProjectAction(ctx, p, "deploy", false); err != nil {
+	if _, err = a.projectCommand(ctx, p, "up", "-d", "--remove-orphans"); err != nil {
 		t.Fatal(err)
 	}
 	items, err := a.ProjectStatus(ctx, p)
 	if err != nil {
 		t.Fatal(err)
+	}
+	before := items
+	if len(before) != 1 || before[0].ID == "" {
+		t.Fatalf("升级前容器信息有误：%+v", before)
+	}
+	mountsBefore, err := a.Command(ctx, "docker", "inspect", "--format", "{{json .Mounts}}", before[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = a.migrateProjects(); err != nil {
+		t.Fatal(err)
+	}
+	p, err = a.project(ctx, p.ID)
+	if err != nil || p.Directory != dir || !p.LegacyDirectory {
+		t.Fatalf("旧项目路径迁移失败：%+v %v", p, err)
+	}
+	items, err = a.ProjectStatus(ctx, p)
+	if err != nil || len(items) != 1 || items[0].ID != before[0].ID || items[0].State != before[0].State {
+		t.Fatalf("升级改变了容器状态：%+v %v", items, err)
+	}
+	mountsAfter, err := a.Command(ctx, "docker", "inspect", "--format", "{{json .Mounts}}", items[0].ID)
+	if err != nil || string(mountsBefore) != string(mountsAfter) {
+		t.Fatalf("升级改变了容器挂载：%s -> %s (%v)", mountsBefore, mountsAfter, err)
 	}
 	upstream, err := projectUpstream(items, "web", 80, "http")
 	if err != nil {
@@ -74,7 +108,7 @@ volumes:
 	if response.StatusCode != 200 {
 		t.Fatalf("应用状态 %d", response.StatusCode)
 	}
-	if _, err = a.runProjectAction(ctx, p, "stop", false); err != nil {
+	if _, err = a.runProjectAction(ctx, p.ID, "stop", false); err != nil {
 		t.Fatal(err)
 	}
 	items, err = a.ProjectStatus(ctx, p)
@@ -84,10 +118,10 @@ volumes:
 	if _, err = projectUpstream(items, "web", 80, "http"); err == nil {
 		t.Fatal("停止后依然被视为运行")
 	}
-	if _, err = a.runProjectAction(ctx, p, "start", false); err != nil {
+	if _, err = a.runProjectAction(ctx, p.ID, "start", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = a.runProjectAction(ctx, p, "delete", true); err != nil {
+	if _, err = a.runProjectAction(ctx, p.ID, "delete", true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {

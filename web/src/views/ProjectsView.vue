@@ -145,7 +145,36 @@ const editorError = ref('')
 const selected = ref<Project | null>(null)
 const form = reactive({ name: '', compose: '', environment: '' })
 const formRef = ref<FormInstance>()
-const rules: FormRules = { name: [{ required: true, whitespace: true, message: '请填写项目名称', trigger: ['blur', 'change'] }], compose: [{ required: true, whitespace: true, message: '请填写 Compose 配置', trigger: ['blur', 'change'] }] }
+const restoreFromDirectory = computed(() => !selected.value && !form.compose.trim())
+const projectInput = computed(() => ({
+  name: form.name,
+  compose: restoreFromDirectory.value ? '' : form.compose,
+  environment: restoreFromDirectory.value ? '' : form.environment,
+}))
+const rules: FormRules = {
+  name: [{
+    required: true,
+    trigger: 'blur',
+    validator: (_rule, value: string, done) => {
+      const project = selected.value
+      if (project?.legacy_directory && value === project.name) return done()
+      const name = value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
+      if (!name) return done(new Error('请填写项目名称'))
+      if (new globalThis.TextEncoder().encode(name).length > 100) return done(new Error('项目名称不能超过 100 字节'))
+      if (!project?.legacy_directory && (name === '.' || name === '..' || name.includes('/') || name.includes('\0'))) {
+        return done(new Error('项目名称不能包含斜杠或空字符，也不能是「.」或「..」'))
+      }
+      done()
+    },
+  }],
+  compose: [{
+    trigger: 'blur',
+    validator: (_rule, value: string, done) => {
+      if (selected.value && !value.trim()) return done(new Error('请填写 Compose 配置'))
+      done()
+    },
+  }],
+}
 const ports = ref<ProjectPort[]>([])
 const scanned = ref(false)
 const scanning = ref(false)
@@ -159,8 +188,11 @@ async function edit(item?: Project) {
   try { const data = await projects.get(item.id); Object.assign(form, { name: data.name, compose: data.compose ?? '', environment: data.environment ?? '' }) } catch (e) { editorError.value = errorText(e, '读取项目失败') } finally { editorLoading.value = false }
 }
 async function scan() {
+  const fields = restoreFromDirectory.value || form.name ? ['name', 'compose'] : ['compose']
+  if (scanning.value || !(await formRef.value?.validateField(fields).catch(() => false))) return
   scanning.value = true; editorError.value = ''
-  try { ports.value = await projects.scan({ ...form, id: selected.value?.id }); scanned.value = true } catch (e) { editorError.value = errorText(e, '扫描端口失败') } finally { scanning.value = false }
+  ports.value = []; scanned.value = false
+  try { ports.value = await projects.scan({ ...projectInput.value, id: selected.value?.id }); scanned.value = true } catch (e) { editorError.value = errorText(e, '扫描端口失败') } finally { scanning.value = false }
 }
 const hostPort = (p: ProjectPort) => p.source === 'expose' ? '未发布（仅内部访问）' : p.published && p.published !== '0' ? `${p.host_ip ? p.host_ip + ':' : ''}${p.published}` : '部署后自动分配'
 async function save() {
@@ -168,8 +200,8 @@ async function save() {
   saving.value = true; editorError.value = ''
   try {
     const result = selected.value
-      ? await projects.update(selected.value.id, form)
-      : await projects.create(form)
+      ? await projects.update(selected.value.id, projectInput.value)
+      : await projects.create(projectInput.value)
     editor.value = false
     if (result.operation) {
       void track(result.operation, `部署 ${result.name}`, `${result.name} 部署完成`).then(outcome => {
@@ -320,10 +352,16 @@ const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.nam
     <template #header><div><h2>{{ editorTitle }}</h2><p v-if="selected">保存后将重新部署项目。</p></div></template>
     <div v-loading="editorLoading" class="drawer-body">
       <el-alert v-if="editorError" :title="editorError" type="error" :closable="false" show-icon/>
-      <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="save">
-        <el-form-item label="项目名称" prop="name"><el-input v-model="form.name" maxlength="100" placeholder="例如 ghost-blog"/></el-form-item>
-        <el-form-item label="Compose 配置" prop="compose"><el-input v-model="form.compose" type="textarea" :rows="13" spellcheck="false" placeholder="粘贴 Compose YAML 配置"/></el-form-item>
-        <el-form-item label="环境变量 .env（可选）"><el-input v-model="form.environment" type="textarea" :rows="4" spellcheck="false" placeholder="每行填写 KEY=VALUE"/></el-form-item>
+      <el-form ref="formRef" :model="form" :rules="rules" label-position="top" scroll-to-error @submit.prevent="save">
+        <el-form-item label="项目名称" prop="name">
+          <el-input v-model="form.name" :aria-describedby="selected?.legacy_directory ? undefined : 'project-name-help'" placeholder="例如 ghost-blog"/>
+          <span v-if="!selected?.legacy_directory" id="project-name-help" class="muted">项目名称用作目录名，最多 100 字节。{{ selected ? '改名会移动项目目录。' : '' }}</span>
+        </el-form-item>
+        <el-form-item label="Compose 配置" prop="compose" :required="!!selected">
+          <el-input v-model="form.compose" type="textarea" :rows="13" :aria-describedby="selected ? undefined : 'project-compose-help'" spellcheck="false" placeholder="粘贴 Compose YAML 配置"/>
+          <span v-if="!selected" id="project-compose-help" class="muted">要从已有目录恢复项目，请填写目录名并留空此处。系统会读取其中的 compose.yaml 和 .env。</span>
+        </el-form-item>
+        <el-form-item label="环境变量 .env（可选）"><el-input v-model="form.environment" :disabled="restoreFromDirectory" type="textarea" :rows="4" spellcheck="false" placeholder="每行填写 KEY=VALUE"/></el-form-item>
       </el-form>
       <section class="block">
         <div class="block-h"><h3>服务端口</h3><el-button size="small" :loading="scanning" :disabled="editorLoading" @click="scan"><AppIcon v-if="!scanning" name="refresh"/>扫描端口</el-button></div>
@@ -351,11 +389,12 @@ const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.nam
   </el-drawer>
   <el-dialog v-model="deleteOpen" :title="`删除 ${deleteTarget?.name ?? ''}`" width="min(520px, calc(100vw - 32px))" :close-on-click-modal="false" append-to-body @opened="cancelDelete?.ref?.focus()">
     <p>删除项目会移除容器、网络和域名绑定，保留 Docker 数据卷及镜像。</p>
-    <el-checkbox v-model="deleteFiles" :disabled="!deleteTarget?.directory" :aria-describedby="deleteFiles ? 'project-delete-directory' : undefined">同时删除项目文件</el-checkbox>
+    <el-checkbox v-model="deleteFiles" :disabled="!deleteTarget?.directory" aria-describedby="project-delete-directory">同时删除项目目录及其中的数据</el-checkbox>
     <div v-if="deleteFiles" id="project-delete-directory" class="project-delete-directory">
       <p>以下目录将被永久删除，包括配置、环境变量文件和目录内的挂载数据（如 <code>./data</code>）。</p>
       <code>{{ deleteTarget?.directory }}</code>
     </div>
+    <p v-else id="project-delete-directory">仅删除项目目录根部的 <code>compose.yaml</code> 和 <code>.env</code>，保留目录、其他文件和挂载数据。</p>
     <template #footer>
       <el-button ref="cancelDelete" @click="deleteOpen = false">取消</el-button>
       <el-button type="danger" :disabled="busy" @click="confirmDelete">删除</el-button>

@@ -12,6 +12,7 @@ mkdir -p "$fixture/bin"
 export PATH="$fixture/bin:$PATH"
 project_id=0123456789abcdef01234567
 export UNINSTALL_TEST_PROJECT="$project_id"
+export UNINSTALL_TEST_DIRECTORY="$project_id"
 root="$fixture/panel"
 command_link="$fixture/bin/lpanel"
 config="$fixture/nginx/lpanel.conf"
@@ -31,6 +32,7 @@ for original, replacement in {
     "command_link=/usr/local/bin/lpanel": "command_link=" + shlex.quote(str(fixture / "bin/lpanel")),
     "unit_dir=/etc/systemd/system": "unit_dir=" + shlex.quote(str(fixture / "units")),
     "nginx_conf=/etc/nginx/conf.d/lpanel.conf": "nginx_conf=" + shlex.quote(str(fixture / "nginx/lpanel.conf")),
+    'Path("/proc/self/mountinfo")': f"Path({str(fixture / 'mountinfo')!r})",
 }.items():
     assert script.count(original) == 1
     script = script.replace(original, replacement)
@@ -43,10 +45,14 @@ set -euo pipefail
 echo "${0##*/} $*" >> "$UNINSTALL_TEST_ROOT/calls"
 case "${0##*/} $1" in
   'docker compose')
-    project_dir="$UNINSTALL_TEST_ROOT/panel/data/projects/$UNINSTALL_TEST_PROJECT"
+    project_dir="$UNINSTALL_TEST_ROOT/panel/data/projects/$UNINSTALL_TEST_DIRECTORY"
     expected=(compose --project-name "lpanel-$UNINSTALL_TEST_PROJECT" --project-directory "$project_dir"
       --env-file "$project_dir/.env" -f "$project_dir/compose.yaml" down --remove-orphans)
-    [[ $# -eq ${#expected[@]} && "$*" == "${expected[*]}" ]]
+    [[ $# -eq ${#expected[@]} ]]
+    for arg in "${expected[@]}"; do
+      [[ "$1" == "$arg" ]]
+      shift
+    done
     [[ -f "$project_dir/data/content" ]]
     [[ "${UNINSTALL_TEST_FAILURE:-}" != compose ]] ;;
   'nginx -t')
@@ -66,6 +72,7 @@ setup() {
   rm -rf -- "$root" "$fixture/units" "$fixture/nginx" "$fixture/outside"
   rm -f -- "$command_link"
   : > "$fixture/calls"
+  : > "$fixture/mountinfo"
   mkdir -p "$root/releases/v0.1.0" "$root/data/acme" "$project/data" \
     "$root/data/projects/unregistered" "$fixture/units" "$fixture/nginx" "$fixture/outside"
   ln -s releases/v0.1.0 "$root/current"
@@ -77,7 +84,7 @@ setup() {
   printf 'ExecStart=%s/current/lpanel serve --root %s\n' "$root" "$root" > "$fixture/units/lpanel.service"
   printf 'ExecStart=%s/current/lpanel renew --root %s\n' "$root" "$root" > "$fixture/units/lpanel-renew.service"
   printf 'Description=LPanel 自动检查证书续期\n' > "$fixture/units/lpanel-renew.timer"
-  python3 - "$root/data/panel.db" "$project_id" <<'PY'
+  python3 - "$root/data/panel.db" "$project_id" "$UNINSTALL_TEST_DIRECTORY" <<'PY'
 import json
 import sqlite3
 import sys
@@ -86,6 +93,9 @@ with sqlite3.connect(sys.argv[1]) as db:
     db.execute("CREATE TABLE projects (id TEXT, name TEXT)")
     db.execute("CREATE TABLE bindings (payload TEXT)")
     db.execute("INSERT INTO projects VALUES (?, '示例项目')", (sys.argv[2],))
+    if sys.argv[3] != sys.argv[2]:
+        db.execute("ALTER TABLE projects ADD COLUMN directory TEXT")
+        db.execute("UPDATE projects SET directory = ?", (sys.argv[3],))
     db.executemany("INSERT INTO bindings VALUES (?)", [
         (json.dumps({"kind": kind, "resource_id": sys.argv[2]}),) for kind in ("project", "site")
     ])
@@ -134,6 +144,27 @@ with sqlite3.connect(sys.argv[1]) as db:
     assert db.execute("SELECT count(*) FROM projects").fetchone() == (0,)
     assert db.execute("SELECT json_extract(payload, '$.kind') FROM bindings").fetchall() == [("site",)]
 PY
+
+UNINSTALL_TEST_DIRECTORY=$'测试 项目\t目录\n数据\\保留'
+project="$root/data/projects/$UNINSTALL_TEST_DIRECTORY"
+setup
+mkdir -p -- "$root/data/projects/$project_id"
+touch -- "$root/data/projects/$project_id/unregistered-data"
+python3 - "$fixture/mountinfo" "$project/data" <<'PY'
+from pathlib import Path
+import sys
+
+target = sys.argv[2].translate(str.maketrans({"\\": r"\134", " ": r"\040", "\t": r"\011", "\n": r"\012"}))
+Path(sys.argv[1]).write_text(f"1 0 0:1 / {target} rw - tmpfs tmpfs rw\n")
+PY
+if uninstall $'y\ny\n'; then exit 1; fi
+grep -Fq '有宿主机挂载点' "$fixture/output"
+[[ ! -s "$fixture/calls" && -f "$project/data/content" ]]
+: > "$fixture/mountinfo"
+uninstall $'y\ny\n'
+[[ ! -e "$project" && -f "$root/data/projects/$project_id/unregistered-data" ]]
+UNINSTALL_TEST_DIRECTORY="$project_id"
+project="$root/data/projects/$project_id"
 
 setup
 python3 - "$root/data/panel.db" <<'PY'

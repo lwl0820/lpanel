@@ -1,5 +1,5 @@
 import { request, type Operation } from './api'
-export interface Project { id: string; name: string; compose?: string; environment?: string; updated_at: string; directory?: string }
+export interface Project { id: string; name: string; compose?: string; environment?: string; updated_at: string; directory?: string; legacy_directory: boolean }
 export interface ProjectInput { id?: string; name: string; compose: string; environment: string }
 export interface ProjectPort { service: string; container_port: number; published: string; host_ip: string; protocol: string; source: 'ports' | 'expose' }
 export interface ProjectContainer { ID: string; Name: string; Service: string; State: string; Health: string; ExitCode: number; Publishers: { URL: string; TargetPort: number; PublishedPort: number; Protocol: string }[] | null }
