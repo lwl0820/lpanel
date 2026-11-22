@@ -5,7 +5,7 @@ import type { UpgradeState } from './upgrade-api'
 const now = new Date('2025-06-01T12:00:00Z')
 const at = (days: number) => new Date(now.getTime() + days * 86400000).toISOString()
 const binding = (patch: Partial<Binding> = {}): Binding => ({ id: 'b1', kind: 'site', resource_id: 's1', domain: 'a.example.com', upstream: '', directory: '', spa: false, service: '', container_port: 0, auto_certificate: true, certificate_status: 'enabled', certificate_error: '', expires_at: at(60), ...patch })
-const upgrade = (available: boolean): UpgradeState => ({ repository: '', current: 'v1', latest: available ? 'v2' : 'v1', available, checked_at: '', error: '' })
+const upgrade = (available: boolean): UpgradeState => ({ repository: '', current: 'v1', latest: available ? 'v2' : 'v1', available, checked_at: '', error: '', auto_update: false })
 describe('daysLeft', () => {
   test('空值和无效日期返回 null', () => {
     expect(daysLeft('', now)).toBeNull()

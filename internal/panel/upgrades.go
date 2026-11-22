@@ -3,9 +3,12 @@ package panel
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"runtime"
@@ -19,6 +22,7 @@ type UpgradeState struct {
 	Current     string `json:"current"`
 	Latest      string `json:"latest"`
 	Available   bool   `json:"available"`
+	AutoUpdate  bool   `json:"auto_update"`
 	CheckedAt   string `json:"checked_at"`
 	Error       string `json:"error"`
 	AssetURL    string `json:"asset_url,omitempty"`
@@ -52,21 +56,47 @@ func newerRelease(latest, current string) (bool, error) {
 	return false, nil
 }
 
-func (a *App) RegisterUpgradeRoutes() error {
-	_, err := a.DB.Exec(`CREATE TABLE IF NOT EXISTS upgrade_settings(id INTEGER PRIMARY KEY CHECK(id=1),repository TEXT NOT NULL);CREATE TABLE IF NOT EXISTS upgrade_state(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL);`)
+func (a *App) migrateUpgradeSettings() error {
+	tx, err := a.DB.Begin()
 	if err != nil {
 		return err
 	}
-	if _, err = a.DB.Exec("INSERT OR IGNORE INTO upgrade_settings(id,repository) VALUES(1,?)", a.Config.ReleaseRepository); err != nil {
+	defer tx.Rollback()
+	if _, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS upgrade_settings(id INTEGER PRIMARY KEY CHECK(id=1),repository TEXT NOT NULL,auto_update INTEGER NOT NULL DEFAULT 0);
+		CREATE TABLE IF NOT EXISTS upgrade_state(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL);
+	`); err != nil {
 		return err
 	}
-	a.Mux.Handle("GET /api/v1/system/updates", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var hasAutoUpdate bool
+	if err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM pragma_table_info('upgrade_settings') WHERE name='auto_update')").Scan(&hasAutoUpdate); err != nil {
+		return err
+	}
+	if !hasAutoUpdate {
+		if _, err = tx.Exec("ALTER TABLE upgrade_settings ADD COLUMN auto_update INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec("INSERT OR IGNORE INTO upgrade_settings(id,repository) VALUES(1,?)", a.Config.ReleaseRepository); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (a *App) RegisterUpgradeRoutes() error {
+	if err := a.migrateUpgradeSettings(); err != nil {
+		return err
+	}
+	writeStatus := func(w http.ResponseWriter) {
 		state, err := a.UpgradeStatus()
 		if err != nil {
 			WriteError(w, 500, "update_state_error", "读取版本状态失败")
 			return
 		}
 		WriteJSON(w, 200, state)
+	}
+	a.Mux.Handle("GET /api/v1/system/updates", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeStatus(w)
 	})))
 	a.Mux.Handle("PUT /api/v1/system/updates/repository", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
@@ -89,7 +119,24 @@ func (a *App) RegisterUpgradeRoutes() error {
 			WriteError(w, 500, "update_state_error", "保存版本状态失败")
 			return
 		}
-		WriteJSON(w, 200, state)
+		writeStatus(w)
+	})))
+	a.Mux.Handle("PUT /api/v1/system/updates/auto-update", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			AutoUpdate *bool `json:"auto_update"`
+		}
+		if !ReadJSON(w, r, &input) {
+			return
+		}
+		if input.AutoUpdate == nil {
+			WriteError(w, 400, "invalid_auto_update", "请选择是否开启自动更新")
+			return
+		}
+		if _, err := a.DB.ExecContext(r.Context(), "UPDATE upgrade_settings SET auto_update=? WHERE id=1", *input.AutoUpdate); err != nil {
+			WriteError(w, 500, "update_settings_error", "保存自动更新设置失败")
+			return
+		}
+		writeStatus(w)
 	})))
 	a.Mux.Handle("POST /api/v1/system/updates/check", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state, err := a.checkUpgrade(r.Context(), "https://api.github.com", &http.Client{Timeout: 45 * time.Second})
@@ -103,21 +150,24 @@ func (a *App) RegisterUpgradeRoutes() error {
 	return nil
 }
 func (a *App) UpgradeStatus() (UpgradeState, error) {
-	state := UpgradeState{Current: a.Version}
-	var payload string
-	if err := a.DB.QueryRow("SELECT repository FROM upgrade_settings WHERE id=1").Scan(&state.Repository); err != nil {
+	var state UpgradeState
+	var repository, payload string
+	var autoUpdate bool
+	if err := a.DB.QueryRow(`
+		SELECT settings.repository, settings.auto_update, COALESCE(state.payload, '{}')
+		FROM upgrade_settings AS settings LEFT JOIN upgrade_state AS state ON state.id=settings.id
+		WHERE settings.id=1
+	`).Scan(&repository, &autoUpdate, &payload); err != nil {
 		return state, err
 	}
-	if err := a.DB.QueryRow("SELECT payload FROM upgrade_state WHERE id=1").Scan(&payload); err == nil {
-		repo := state.Repository
-		if err = json.Unmarshal([]byte(payload), &state); err != nil {
-			return state, err
-		}
-		state.Repository = repo
-		state.Current = a.Version
-		newer, _ := newerRelease(state.Latest, state.Current)
-		state.Available = state.Available && newer
+	if err := json.Unmarshal([]byte(payload), &state); err != nil {
+		return state, err
 	}
+	state.Repository = repository
+	state.AutoUpdate = autoUpdate
+	state.Current = a.Version
+	newer, _ := newerRelease(state.Latest, state.Current)
+	state.Available = state.Available && newer
 	return state, nil
 }
 func (a *App) saveUpgradeState(state UpgradeState) error {
@@ -133,7 +183,7 @@ func (a *App) checkUpgrade(ctx context.Context, base string, client *http.Client
 	if err != nil {
 		return state, err
 	}
-	state = UpgradeState{Repository: state.Repository, Current: a.Version, CheckedAt: time.Now().UTC().Format(time.RFC3339)}
+	state = UpgradeState{Repository: state.Repository, AutoUpdate: state.AutoUpdate, Current: a.Version, CheckedAt: time.Now().UTC().Format(time.RFC3339)}
 	defer func() {
 		if err != nil {
 			state.Error = err.Error()
@@ -202,6 +252,7 @@ func (a *App) checkUpgrade(ctx context.Context, base string, client *http.Client
 }
 func (a *App) StartUpgradeChecker(ctx context.Context) {
 	go func() {
+		client := &http.Client{Timeout: 45 * time.Second}
 		timer := time.NewTimer(0)
 		defer timer.Stop()
 		for {
@@ -210,38 +261,57 @@ func (a *App) StartUpgradeChecker(ctx context.Context) {
 				return
 			case <-timer.C:
 				checkCtx, cancel := context.WithTimeout(ctx, time.Minute)
-				_, _ = a.checkUpgrade(checkCtx, "https://api.github.com", &http.Client{Timeout: 45 * time.Second})
+				a.checkAndAutoUpgrade(checkCtx, "https://api.github.com", client)
 				cancel()
 				timer.Reset(24 * time.Hour)
 			}
 		}
 	}()
 }
+
+func (a *App) checkAndAutoUpgrade(ctx context.Context, base string, client *http.Client) {
+	state, err := a.checkUpgrade(ctx, base, client)
+	if err != nil || !state.Available || !state.AutoUpdate {
+		return
+	}
+	if _, err := a.enqueueUpgrade(ctx, state, true); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Printf("启动自动更新失败：%v", err)
+	}
+}
+
 func (a *App) startUpgrade(w http.ResponseWriter, r *http.Request) {
 	state, err := a.UpgradeStatus()
 	if err != nil || !state.Available || state.Error != "" {
 		WriteError(w, 400, "update_unavailable", "请先检查并确认存在可用的新版本")
 		return
 	}
-	var running int
-	if err = a.DB.QueryRow("SELECT count(*) FROM operations WHERE kind='upgrade' AND status='running'").Scan(&running); err != nil {
-		WriteError(w, 500, "database_error", "读取升级状态失败")
-		return
-	}
-	if running > 0 {
+	op, err := a.enqueueUpgrade(r.Context(), state, false)
+	if errors.Is(err, sql.ErrNoRows) {
 		WriteError(w, 409, "upgrade_running", "已有升级正在执行")
 		return
 	}
-	raw := make([]byte, 16)
-	if _, err = rand.Read(raw); err != nil {
-		WriteError(w, 500, "operation_error", "创建升级任务失败")
-		return
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	op := Operation{ID: hex.EncodeToString(raw), Kind: "upgrade", Status: "running", CreatedAt: now, UpdatedAt: now}
-	if _, err = a.DB.Exec("INSERT INTO operations(id,kind,status,created_at,updated_at) VALUES(?,?,?,?,?)", op.ID, op.Kind, op.Status, now, now); err != nil {
+	if err != nil {
 		WriteError(w, 500, "operation_error", "保存升级任务失败")
 		return
+	}
+	WriteJSON(w, 202, op)
+}
+
+func (a *App) enqueueUpgrade(ctx context.Context, state UpgradeState, automatic bool) (Operation, error) {
+	raw := make([]byte, 16)
+	rand.Read(raw)
+	now := time.Now().UTC().Format(time.RFC3339)
+	op := Operation{ID: hex.EncodeToString(raw), Kind: "upgrade", Status: "running", CreatedAt: now, UpdatedAt: now}
+	// 手动和自动安装共用一次数据库写入判定，避免同时创建升级任务。
+	err := a.DB.QueryRowContext(ctx, `
+		INSERT INTO operations(id,kind,status,created_at,updated_at)
+		SELECT ?,?,?,?,?
+		WHERE NOT EXISTS (SELECT 1 FROM operations WHERE kind='upgrade' AND status='running')
+		  AND (NOT ? OR EXISTS (SELECT 1 FROM upgrade_settings WHERE id=1 AND auto_update=1 AND repository=?))
+		RETURNING id
+	`, op.ID, op.Kind, op.Status, now, now, automatic, state.Repository).Scan(&op.ID)
+	if err != nil {
+		return Operation{}, err
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -254,7 +324,7 @@ func (a *App) startUpgrade(w http.ResponseWriter, r *http.Request) {
 			a.finishUpgrade(op.ID, "failed", "", err.Error())
 		}
 	}()
-	WriteJSON(w, 202, op)
+	return op, nil
 }
 func (a *App) finishUpgrade(id, status, log, message string) {
 	_, _ = a.DB.Exec("UPDATE operations SET status=?,log=?,error=?,updated_at=? WHERE id=?", status, log, message, time.Now().UTC().Format(time.RFC3339), id)

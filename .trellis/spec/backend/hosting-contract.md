@@ -43,6 +43,8 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 发布标签为 vX.Y.Z，附件 lpanel_vX.Y.Z_linux_ARCH.tar.gz 及同名 .sha256。包内平铺 lpanel、web、deploy。程序和前端一起切换 current；data 不随发行包覆盖。公开发布源保存在 upgrade_settings，初始值来自 Config.ReleaseRepository。
 
+面板服务启动时检查版本，此后每 24 小时检查一次。自动更新设置持久保存，新旧安装均默认关闭。只有后台检查成功并发现可用发行包且开关已开启时，才自动发起现有升级流程。切换设置与手动检查均不触发安装。
+
 推送正式标签会触发 `.github/workflows/release.yml`。从 `main` 手动触发时输入已有的 `tag`。两种路径均检出标签源码、执行 `scripts/build-release.sh`、校验 amd64 和 arm64 发行包，再以四个附件发布正式 Release。安装和升级通过 GitHub Release 条目读取发行包。
 
 在线安装按命令行仓库、`LPANEL_REPOSITORY`、交互输入的顺序取值。安装仅询问当前方式适用的缺项。填写域名后，自动申请证书的交互默认值为 `y`。申请证书时，提供商默认 Let’s Encrypt，所选条款默认同意，联系邮箱默认为 `acme@<转为小写的面板域名>`。按回车接受默认值。申请证书的安装创建首个 ACME 账户，HTTP 安装从空账户列表开始。显式空域名表示使用服务器地址，显式空邮箱表示留空。密码始终通过标准输入交给面板初始化。 [密码传递约定](./logging-guidelines.md)

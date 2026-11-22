@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReleaseVersionOrdering(t *testing.T) {
@@ -150,7 +152,7 @@ func TestUpgradeWorkerSuccessAndRollback(t *testing.T) {
 
 func TestUpgradeEndpointsRequireLogin(t *testing.T) {
 	a := upgradeTestApp(t)
-	for _, endpoint := range []struct{ method, path string }{{"GET", "/api/v1/system/updates"}, {"POST", "/api/v1/system/updates/check"}, {"PUT", "/api/v1/system/updates/repository"}, {"POST", "/api/v1/system/updates/upgrade"}} {
+	for _, endpoint := range []struct{ method, path string }{{"GET", "/api/v1/system/updates"}, {"POST", "/api/v1/system/updates/check"}, {"PUT", "/api/v1/system/updates/repository"}, {"PUT", "/api/v1/system/updates/auto-update"}, {"POST", "/api/v1/system/updates/upgrade"}} {
 		if result := call(a, endpoint.method, endpoint.path, `{}`, nil); result.Code != 401 {
 			t.Fatalf("未登录访问 %s 返回 %d", endpoint.path, result.Code)
 		}
@@ -166,5 +168,123 @@ func TestUpgradeEndpointsRequireLogin(t *testing.T) {
 	state, err := a.UpgradeStatus()
 	if err != nil || state.Repository != "new-owner/new-panel" || state.Available {
 		t.Fatalf("仓库状态未重置 %+v %v", state, err)
+	}
+}
+
+func TestAutoUpdateSettingsPersistAfterMigration(t *testing.T) {
+	a := upgradeTestApp(t)
+	if _, err := a.DB.Exec("ALTER TABLE upgrade_settings DROP COLUMN auto_update"); err != nil {
+		t.Fatal(err)
+	}
+	reopen := func() {
+		t.Helper()
+		if err := a.Close(); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		a, err = Open(a.Root, "v1.0.0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		reopened := a
+		t.Cleanup(func() { _ = reopened.Close() })
+	}
+	reopen()
+	state, err := a.UpgradeStatus()
+	if err != nil || state.AutoUpdate || state.Repository != "owner/panel" {
+		t.Fatalf("迁移后的设置：%+v，%v", state, err)
+	}
+	if err := a.saveUpgradeState(UpgradeState{Latest: "v1.1.0", Available: true}); err != nil {
+		t.Fatal(err)
+	}
+	login := call(a, "POST", "/api/v1/auth/login", `{"username":"管理员","password":"test-password"}`, nil)
+	cookie := login.Result().Cookies()[0]
+	path := "/api/v1/system/updates/auto-update"
+	if result := call(a, "PUT", path, `{}`, cookie); result.Code != 400 {
+		t.Fatalf("缺少设置值时返回 %d", result.Code)
+	}
+	assertState := func(result *httptest.ResponseRecorder, enabled bool) {
+		t.Helper()
+		var state UpgradeState
+		err := json.Unmarshal(result.Body.Bytes(), &state)
+		if result.Code != 200 || err != nil || state.AutoUpdate != enabled || state.Repository != "owner/panel" || !state.Available {
+			t.Fatalf("更新状态：%d %s，%v", result.Code, result.Body.String(), err)
+		}
+	}
+	assertState(call(a, "PUT", path, `{"auto_update":true}`, cookie), true)
+	reopen()
+	assertState(call(a, "GET", "/api/v1/system/updates", "", cookie), true)
+	assertState(call(a, "PUT", path, `{"auto_update":false}`, cookie), false)
+	var count int
+	if err := a.DB.QueryRow("SELECT count(*) FROM operations WHERE kind='upgrade'").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("保存设置后升级任务数为 %d，%v", count, err)
+	}
+}
+
+func TestUpgradeRejectsManualInstallWhileRunning(t *testing.T) {
+	a := upgradeTestApp(t)
+	if err := a.saveUpgradeState(UpgradeState{Latest: "v1.1.0", Available: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DB.Exec("INSERT INTO operations(id,kind,status,created_at,updated_at) VALUES('running','upgrade','running','','')"); err != nil {
+		t.Fatal(err)
+	}
+	login := call(a, "POST", "/api/v1/auth/login", `{"username":"管理员","password":"test-password"}`, nil)
+	result := call(a, "POST", "/api/v1/system/updates/upgrade", "", login.Result().Cookies()[0])
+	if result.Code != 409 || !strings.Contains(result.Body.String(), "upgrade_running") {
+		t.Fatalf("升级进行中时手动安装返回 %d %s", result.Code, result.Body.String())
+	}
+}
+
+func TestAutoUpdateUsesOnlyEligibleBackgroundChecks(t *testing.T) {
+	a := upgradeTestApp(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/valid/repos/owner/panel/releases/latest":
+			name := "lpanel_v1.1.0_linux_" + runtime.GOARCH + ".tar.gz"
+			fmt.Fprintf(w, `{"tag_name":"v1.1.0","assets":[{"name":%q,"browser_download_url":"http://%s/package"},{"name":%q,"browser_download_url":"http://%s/checksum"}]}`, name, r.Host, name+".sha256", r.Host)
+		case "/missing/repos/owner/panel/releases/latest":
+			fmt.Fprint(w, `{"tag_name":"v1.1.0","assets":[]}`)
+		case "/current/repos/owner/panel/releases/latest":
+			fmt.Fprint(w, `{"tag_name":"v1.0.0","assets":[]}`)
+		default:
+			w.WriteHeader(502)
+		}
+	}))
+	defer server.Close()
+
+	a.checkAndAutoUpgrade(t.Context(), server.URL+"/valid", server.Client())
+	state, err := a.UpgradeStatus()
+	if err != nil || !state.Available || state.AutoUpdate {
+		t.Fatalf("关闭自动更新时应继续检查：%+v，%v", state, err)
+	}
+	if _, err := a.DB.Exec("UPDATE upgrade_settings SET auto_update=1"); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := a.checkUpgrade(t.Context(), server.URL+"/valid", server.Client()); err != nil || !state.Available {
+		t.Fatalf("手动检查：%+v，%v", state, err)
+	}
+	for _, path := range []string{"/failed", "/missing", "/current"} {
+		a.checkAndAutoUpgrade(t.Context(), server.URL+path, server.Client())
+	}
+	var count int
+	if err := a.DB.QueryRow("SELECT count(*) FROM operations WHERE kind='upgrade'").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("不符合条件时升级任务数为 %d，%v", count, err)
+	}
+
+	a.checkAndAutoUpgrade(t.Context(), server.URL+"/valid", server.Client())
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		var status, message string
+		if err := a.DB.QueryRow("SELECT status,error FROM operations WHERE kind='upgrade'").Scan(&status, &message); err != nil {
+			t.Fatalf("缺少自动创建的升级任务：%v", err)
+		}
+		if status == "failed" && message != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("升级下载应记录 HTTP 失败：%s %s", status, message)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

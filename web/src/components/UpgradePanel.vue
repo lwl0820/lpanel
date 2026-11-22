@@ -11,7 +11,7 @@ const state = ref<UpgradeState | null>(null)
 const repository = ref('')
 const loading = ref(true)
 const error = ref('')
-const pending = ref<'' | 'save' | 'check' | 'install'>('')
+const pending = ref<'' | 'save' | 'auto-update' | 'check' | 'install'>('')
 const operation = ref<Operation | null>(null)
 const reconnecting = ref(false)
 let timer: ReturnType<typeof setTimeout> | undefined
@@ -28,8 +28,21 @@ onMounted(async () => {
 })
 onUnmounted(() => { active = false; if (timer) clearTimeout(timer) })
 async function save() {
+  if (pending.value) return
   pending.value = 'save'; error.value = ''
   try { state.value = await upgrades.repository(repository.value.trim()); repository.value = state.value.repository; ElMessage.success('发布仓库已保存') } catch (e) { error.value = errorText(e, '保存失败') } finally { pending.value = '' }
+}
+async function setAutoUpdate(value: string | number | boolean) {
+  pending.value = 'auto-update'
+  error.value = ''
+  try {
+    state.value = await upgrades.setAutoUpdate(value === true)
+    ElMessage.success(state.value.auto_update ? '已开启自动更新' : '已关闭自动更新')
+  } catch (e) {
+    error.value = errorText(e, '保存自动更新设置失败')
+  } finally {
+    pending.value = ''
+  }
 }
 async function check() {
   pending.value = 'check'; error.value = ''
@@ -69,6 +82,12 @@ async function poll(id: string) {
           <label for="repo">发布仓库</label>
           <div class="inline"><el-input id="repo" v-model="repository" class="mono-input" placeholder="owner/repo" spellcheck="false" @keydown.enter.prevent="save"/><el-button :loading="pending === 'save'" :disabled="!!pending" @click="save">保存</el-button></div>
           <span class="hint">从该 GitHub 仓库的 Releases 检查新版本。</span>
+        </div>
+        <div v-if="state" class="field">
+          <label for="panel-auto-update">自动更新</label>
+          <el-switch id="panel-auto-update" :model-value="state.auto_update"
+            :loading="pending === 'auto-update'" :disabled="!!pending" @change="setAutoUpdate"/>
+          <span class="hint">开启后，面板会在后台检查时自动安装可用的新正式版。</span>
         </div>
         <el-alert v-if="state && !state.repository" title="请先配置公开发布仓库，再检查更新。" type="info" :closable="false"/>
         <el-alert v-else-if="state?.error && !error" :title="state.error" type="warning" :closable="false"/>
