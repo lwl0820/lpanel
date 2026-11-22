@@ -551,3 +551,30 @@
 ### 状态
 
 **已完成**
+
+
+## Session 19: Compose 项目目录与旧版本升级
+<!-- trellis-session: v=2 fp=2bf16b714d5e08f3 -->
+
+**Date**: 2026-11-23
+**Task**: Compose 项目目录与旧版本升级
+**Branch**: `codex/compose-project-folder`
+
+### Summary
+
+新建项目按名称登记目录，升级回填旧路径，支持复用保留的业务文件。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `990cc9c` | feat: 按项目名称管理新建 Compose 项目目录 |
+
+### Testing
+
+- [OK] 真实 Docker 虚拟机验收通过，覆盖旧容器升级、改名后挂载、部分与整目录删除及恢复。
+- [OK] 项目定向 Go 测试、竞态检查、go vet、前端检查与构建、Chrome 表单验证及卸载冒烟测试通过。
+
+### Status
+
+[OK] **Completed**

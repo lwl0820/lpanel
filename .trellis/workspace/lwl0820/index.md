@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
-- **Last Active**: 2026-11-22
+- **Total Sessions**: 19
+- **Last Active**: 2026-11-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~553 | Active |
+| `journal-1.md` | ~580 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-11-23 | Compose 项目目录与旧版本升级 | `990cc9c` | `codex/compose-project-folder` |
 | 18 | 2026-11-22 | 单容器启停和本地镜像管理 | `b571a7e` | `main` |
 | 17 | 2026-11-22 | 交付服务器状态监控 | `3380fd3` | `main` |
 | 16 | 2026-11-21 | 面板命令行管理和公网 IP HTTPS | `a41d6cf` | `main` |

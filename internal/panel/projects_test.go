@@ -215,6 +215,12 @@ func TestProjectSaveAndSecrets(t *testing.T) {
 	if err != nil || stored.Name != "新名称" {
 		t.Fatal("错误配置覆盖了项目")
 	}
+	if data, err := os.ReadFile(filepath.Join(stored.Directory, "compose.yaml")); err != nil || string(data) != stored.Compose {
+		t.Fatalf("失败的改名没有恢复配置：%q %v", data, err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "data/projects", "错误配置")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("失败的改名留下了新目录：%v", err)
+	}
 }
 
 func TestProjectCreateKeepsProjectWhenDeploymentCannotStart(t *testing.T) {
