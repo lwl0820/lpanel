@@ -578,3 +578,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: 面板自动更新
+<!-- trellis-session: v=2 fp=e636b84b25c38a61 -->
+
+**Date**: 2026-11-23
+**Task**: 面板自动更新
+**Branch**: `codex/compose-project-folder`
+
+### Summary
+
+增加持久化自动更新开关，复用每日检查和升级流程；覆盖旧库迁移、安装条件和页面交互。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `00097a8` | feat: 支持面板后台自动更新 |
+
+### Status
+
+[OK] **Completed**
