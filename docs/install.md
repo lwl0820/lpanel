@@ -140,7 +140,7 @@ sudo systemctl status lpanel-renew.timer
 
 在面板的更新页面可以手动检查和安装新版本，也可以开启“自动更新”。此开关默认关闭，开启后从下一次后台检查起自动安装适用于本机的较新正式版。面板服务启动时检查一次，之后每 24 小时检查一次，关闭浏览器也会执行。发行版切换使用 `current` 指针，持久化配置与数据库位于独立的 `data/` 中，不随程序覆盖。
 
-若从旧版升级后，小文件能上传，但超过 1 MiB 的文件提示过大，可运行 `sudo /opt/lpanel/current/lpanel setup-nginx --root /opt/lpanel` 重新生成面板的 Nginx 配置，再重试上传。若面板前另有反向代理，也要检查该代理的上传限制。
+若从旧版升级后，上传文件或导入编排项目 ZIP 时提示超过 1 MiB，可运行 `sudo /opt/lpanel/current/lpanel setup-nginx --root /opt/lpanel` 重新生成面板的 Nginx 配置，再重试上传。若面板前另有反向代理，也要检查该代理的上传限制。
 
 ### 管理本机防火墙
 

@@ -37,7 +37,7 @@ const stats = computed(() => {
   if (!d) return []
   const failed = d.bindings.some(b => certState(b, now.value) === 'failed')
   return [
-    { to: '/projects', label: '容器项目', value: d.projects.length, hint: d.projects.length ? `${d.projects.filter(p => bound('project', p.id)).length} 个已绑定域名` : '尚未添加', tone: '' },
+    { to: '/projects', label: '编排项目', value: d.projects.length, hint: d.projects.length ? `${d.projects.filter(p => bound('project', p.id)).length} 个已绑定域名` : '尚未添加', tone: '' },
     { to: '/sites', label: '静态网站', value: d.sites.length, hint: d.sites.length ? `${d.sites.filter(s => s.spa).length} 个单页应用` : '尚未添加', tone: '' },
     { to: '/domains', label: '域名', value: d.bindings.length, hint: d.bindings.length ? `${d.bindings.filter(b => b.certificate_status === 'enabled').length} 个已启用 HTTPS` : '尚未绑定', tone: '' },
     { to: '/domains', label: '证书需处理', value: certTodos.value, hint: certTodos.value ? '失败或 30 天内到期' : '无', tone: certTodos.value ? (failed ? 'bad' : 'warn') : '' },
@@ -69,7 +69,7 @@ async function certificateDone({ binding, operation }: CertificateRequestResult)
       <section v-if="fresh" class="panel">
         <div class="panel-h"><h2>开始使用</h2></div>
         <ul class="todo">
-          <li><span class="dot info">1</span><span class="txt"><b>添加容器项目</b><span>粘贴 Compose 配置，创建时自动部署。</span></span><el-button size="small" type="primary" @click="$router.push('/projects?new=1')">新建项目</el-button></li>
+          <li><span class="dot info">1</span><span class="txt"><b>添加编排项目</b><span>粘贴 Compose 配置，创建时自动部署。</span></span><el-button size="small" type="primary" @click="$router.push('/projects?new=1')">新建项目</el-button></li>
           <li><span class="dot info">2</span><span class="txt"><b>或添加静态网站</b><span>指定服务器上的网页目录。</span></span><el-button size="small" @click="$router.push('/sites?new=1')">新建网站</el-button></li>
           <li><span class="dot info">3</span><span class="txt"><b>绑定域名并申请证书</b><span>先把域名解析到本服务器。</span></span><el-button size="small" @click="$router.push('/domains')">去绑定</el-button></li>
         </ul>

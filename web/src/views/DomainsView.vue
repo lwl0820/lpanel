@@ -41,7 +41,7 @@ async function load() {
 }
 onMounted(load)
 async function reload() { loading.value = true; await load() }
-const KIND = { panel: '面板', project: '容器项目', site: '静态网站' }
+const KIND = { panel: '面板', project: '编排项目', site: '静态网站' }
 function target(b: Binding) {
   if (b.kind === 'panel') return { name: '本面板', detail: '' }
   if (b.kind === 'project') return { name: projectList.value.find(p => p.id === b.resource_id)?.name ?? '已删除的项目', detail: `${b.service}:${b.container_port}` }

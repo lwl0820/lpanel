@@ -15,8 +15,7 @@ const submitting = ref(false)
 const error = ref('')
 const navigation: { path: string; label: string; shortLabel?: string; icon: IconName }[] = [
   { path: '/', label: '概览', icon: 'overview' },
-  { path: '/projects', label: '容器项目', shortLabel: '项目', icon: 'projects' },
-  { path: '/images', label: '镜像管理', shortLabel: '镜像', icon: 'images' },
+  { path: '/projects', label: '容器管理', shortLabel: '容器', icon: 'projects' },
   { path: '/sites', label: '静态网站', shortLabel: '网站', icon: 'sites' },
   { path: '/domains', label: '域名与证书', shortLabel: '域名', icon: 'domains' },
   { path: '/server', label: '服务器管理', shortLabel: '服务器', icon: 'server' },
@@ -66,7 +65,7 @@ async function logout() {
     <aside class="side">
       <RouterLink class="brand" to="/"><AppIcon name="logo"/>LPanel</RouterLink>
       <nav class="nav" aria-label="主导航">
-        <RouterLink v-for="item in navigation" :key="item.path" :to="item.path" :aria-label="item.label" :class="{ active: route.path.startsWith(`${item.path}/`) }" active-class="" exact-active-class="active">
+        <RouterLink v-for="item in navigation" :key="item.path" :to="item.path" :aria-label="item.label" :class="{ active: route.path.startsWith(`${item.path}/`) || (item.path === '/projects' && route.meta.section === 'containers') }" active-class="" exact-active-class="active">
           <AppIcon :name="item.icon"/><span :class="{ 'nav-full': item.shortLabel }">{{ item.label }}</span><span v-if="item.shortLabel" class="nav-short">{{ item.shortLabel }}</span>
         </RouterLink>
       </nav>
@@ -76,7 +75,11 @@ async function logout() {
       <header class="topbar"><RouterLink class="brand" to="/"><AppIcon name="logo"/>LPanel</RouterLink><el-button text size="small" @click="logout">退出</el-button></header>
       <main class="main">
         <div class="content">
-          <nav v-if="route.path.startsWith('/server/')" class="server-nav" aria-label="服务器管理">
+          <nav v-if="route.meta.section === 'containers'" class="section-nav" aria-label="容器管理">
+            <RouterLink to="/projects">编排项目</RouterLink>
+            <RouterLink to="/images">镜像管理</RouterLink>
+          </nav>
+          <nav v-if="route.path.startsWith('/server/')" class="section-nav" aria-label="服务器管理">
             <RouterLink to="/server/monitor">服务器监控</RouterLink>
             <RouterLink to="/server/processes">实时进程</RouterLink>
             <RouterLink to="/server/files">文件管理</RouterLink>

@@ -724,6 +724,11 @@ func TestProjectLegacyDirectoryMigration(t *testing.T) {
 
 func waitProjectOperation(t *testing.T, a *App, id string) {
 	t.Helper()
+	waitProjectOperationStatus(t, a, id, "success")
+}
+
+func waitProjectOperationStatus(t *testing.T, a *App, id, want string) {
+	t.Helper()
 	// 读取操作记录，等待后台流程使用刚保存的目录和配置。
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
 		var status, detail string
@@ -732,10 +737,11 @@ func waitProjectOperation(t *testing.T, a *App, id string) {
 			t.Fatal(err)
 		}
 		switch status {
-		case "success":
+		case "success", "failed":
+			if status != want {
+				t.Fatalf("项目操作状态为 %s，期望 %s：%s", status, want, detail)
+			}
 			return
-		case "failed":
-			t.Fatal(detail)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

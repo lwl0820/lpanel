@@ -160,6 +160,8 @@ func (a *App) RegisterProjectRoutes() error {
 	})))
 	a.Mux.Handle("POST /api/v1/projects", a.RequireAuth(http.HandlerFunc(a.saveProject)))
 	a.Mux.Handle("PUT /api/v1/projects/{id}", a.RequireAuth(http.HandlerFunc(a.saveProject)))
+	a.Mux.Handle("GET /api/v1/projects/{id}/export", a.RequireAuth(http.HandlerFunc(a.exportProject)))
+	a.Mux.Handle("POST /api/v1/projects/import", a.RequireAuth(http.HandlerFunc(a.importProject)))
 	a.Mux.Handle("POST /api/v1/projects/scan", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var p Project
 		if !ReadJSON(w, r, &p) {
@@ -298,9 +300,7 @@ func (a *App) prepareProject(ctx context.Context, p *Project, scanning bool) (pr
 			}
 			p.Directory = a.projectDirectory(p.Name)
 		}
-		var occupied bool
-		err = a.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM projects WHERE id<>? AND (name=? OR directory=?))",
-			p.ID, p.Name, filepath.Base(p.Directory)).Scan(&occupied)
+		occupied, err := a.projectNameOrDirectoryInUse(ctx, *p)
 		if err != nil {
 			return previous, 500, "project_error", fmt.Errorf("检查项目名称失败：%w", err)
 		}
@@ -328,16 +328,30 @@ func (a *App) prepareProject(ctx context.Context, p *Project, scanning bool) (pr
 		}
 	}
 	if p.ID == "" && strings.TrimSpace(p.Compose) == "" {
-		contents, e := readProjectFiles(p.Directory)
-		if e != nil {
-			return previous, 400, "compose_error", e
+		if err = loadProjectConfig(p); err != nil {
+			return previous, 400, "compose_error", err
 		}
-		if strings.TrimSpace(string(contents[0])) == "" {
-			return previous, 400, "compose_error", fmt.Errorf("项目目录中没有可用的 compose.yaml，请填写 Compose 配置")
-		}
-		p.Compose, p.Environment = string(contents[0]), string(contents[1])
 	}
 	return previous, 0, "", nil
+}
+
+func (a *App) projectNameOrDirectoryInUse(ctx context.Context, p Project) (bool, error) {
+	var occupied bool
+	err := a.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM projects WHERE id<>? AND (name=? OR directory=?))",
+		p.ID, p.Name, filepath.Base(p.Directory)).Scan(&occupied)
+	return occupied, err
+}
+
+func loadProjectConfig(p *Project) error {
+	contents, err := readProjectFiles(p.Directory)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(contents[0])) == "" {
+		return fmt.Errorf("项目目录中没有可用的 compose.yaml，请填写 Compose 配置")
+	}
+	p.Compose, p.Environment = string(contents[0]), string(contents[1])
+	return nil
 }
 
 func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
@@ -360,9 +374,7 @@ func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.ID == "" {
-		var raw [12]byte
-		rand.Read(raw[:])
-		p.ID = hex.EncodeToString(raw[:])
+		p.ID = newProjectID()
 	}
 	renaming := previous.ID != "" && previous.Directory != p.Directory
 	originalDir := p.Directory
@@ -417,16 +429,30 @@ func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 400, "compose_error", err.Error())
 		return
 	}
-	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	_, err = a.DB.ExecContext(ctx, `INSERT INTO projects(id,name,compose,environment,updated_at,directory,legacy_directory) VALUES(?,?,?,?,?,?,?)
-		ON CONFLICT(id) DO UPDATE SET name=excluded.name,compose=excluded.compose,environment=excluded.environment,
-		updated_at=excluded.updated_at,directory=excluded.directory`,
-		p.ID, p.Name, p.Compose, p.Environment, p.UpdatedAt, filepath.Base(p.Directory), p.LegacyDirectory)
-	if err != nil {
+	if err = a.storeProject(ctx, &p); err != nil {
 		err = rollback(err)
 		WriteError(w, 500, "project_error", fmt.Sprintf("保存项目失败：%v", err))
 		return
 	}
+	a.writeProjectDeployment(w, p)
+}
+
+func newProjectID() string {
+	var raw [12]byte
+	rand.Read(raw[:])
+	return hex.EncodeToString(raw[:])
+}
+
+func (a *App) storeProject(ctx context.Context, p *Project) error {
+	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	_, err := a.DB.ExecContext(ctx, `INSERT INTO projects(id,name,compose,environment,updated_at,directory,legacy_directory) VALUES(?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name,compose=excluded.compose,environment=excluded.environment,
+		updated_at=excluded.updated_at,directory=excluded.directory`,
+		p.ID, p.Name, p.Compose, p.Environment, p.UpdatedAt, filepath.Base(p.Directory), p.LegacyDirectory)
+	return err
+}
+
+func (a *App) writeProjectDeployment(w http.ResponseWriter, p Project) {
 	result := struct {
 		Project
 		Operation       *Operation `json:"operation,omitzero"`

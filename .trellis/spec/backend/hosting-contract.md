@@ -10,6 +10,8 @@
 - SaveBinding(ctx, Binding)、DeleteBinding(ctx, id)、ApplyNginx(ctx)、RequestCertificate(ctx, id)、RenewCertificates(ctx) 是项目、网站和面板复用的边界。需指定账户时使用 SaveBindingWithAccount 和 RequestCertificateWithAccount。
 - SaveSite(ctx, Site)、DeleteSite(ctx, id) 同步网站记录和关联绑定。
 - `POST /api/v1/projects` 和 `PUT /api/v1/projects/{id}` 接收 `name`、`compose` 和 `environment`。两者通过配置校验并保存后均提交 `project_deploy` 后台操作。响应为 `200`，项目字段在顶层，并附带 `operation`。
+- `GET /api/v1/projects/{id}/export` 返回 ZIP 附件，`POST /api/v1/projects/import` 接收 `application/zip` 原始请求体。导出按登记目录读取，导入在目标面板建立新的本地项目记录，响应和自动部署流程与新建项目一致。同名项目或目录返回 409。配置校验失败时清理本次导入目录。ZIP 以 project.json 记录显示名，files/ 保存项目目录，导入恢复普通权限位和数值 UID/GID。不能用作本地目录名的旧项目名称沿用 ID 目录机制。
+- 新版服务启动时为已有的 LPanel 托管 Nginx 配置补齐导入代理规则，已包含该规则时跳过重载。刷新失败时记录日志并继续启动。
 - 项目响应的 `directory` 是登记目录的绝对路径。`GET /api/v1/projects/{id}/status` 返回容器列表，含 Docker 的 `ID`。`GET /api/v1/projects/{id}/containers/{containerID}/logs` 查询项目中的指定容器，返回 `{"log":"…"}`。项目汇总日志仍可通过 `GET /api/v1/projects/{id}/logs` 获取。
 - `POST /api/v1/projects/{id}/containers/{containerID}/actions/{action}` 接受 `start`、`stop`。以项目状态列表中的容器 ID 定位副本，成功返回 `200` 和 `message`。无效动作返回 `400`，容器不属于项目时返回 `404`，Docker 执行失败时返回 `502` 并按项目环境变量脱敏。
 - `GET /api/v1/images` 按完整镜像 ID 合并标签，返回数组，字段为 `id`、`tags`、`size`。无标签时返回空数组，大小沿用 Docker 格式化字符串。`DELETE /api/v1/images/{id}` 普通删除单个镜像，保留其未打标签的父镜像。引用或多个标签造成的冲突会返回 Docker 原因。`POST /api/v1/images/prune` 清理没有任何容器引用的镜像，包括带标签镜像，保留已停止容器的镜像。两个写接口均在 Docker 完成后返回 `200` 和 `message`。

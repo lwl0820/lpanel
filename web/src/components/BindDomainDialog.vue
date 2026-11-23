@@ -97,7 +97,7 @@ async function submit() {
       </el-form-item>
       <el-form-item v-if="choosing" label="指向" prop="target">
         <el-select v-model="form.target" placeholder="选择项目、网站或面板">
-          <el-option-group v-if="projectList.length" label="容器项目"><el-option v-for="p in projectList" :key="p.id" :value="`project:${p.id}`" :label="p.name"/></el-option-group>
+          <el-option-group v-if="projectList.length" label="编排项目"><el-option v-for="p in projectList" :key="p.id" :value="`project:${p.id}`" :label="p.name"/></el-option-group>
           <el-option-group v-if="siteList.length" label="静态网站"><el-option v-for="s in siteList" :key="s.id" :value="`site:${s.id}`" :label="s.identifier"/></el-option-group>
           <el-option-group label="其他"><el-option value="panel" label="本面板"/></el-option-group>
         </el-select>

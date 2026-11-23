@@ -28,7 +28,7 @@ test('防火墙可从独立地址打开', async () => {
 })
 test('已注册页面显示对应标题', async () => {
   const titles: Record<string, string> = {
-    '/': '概览', '/projects': '容器项目', '/images': '镜像管理', '/sites': '静态网站', '/domains': '域名与证书',
+    '/': '概览', '/projects': '编排项目', '/images': '镜像管理', '/sites': '静态网站', '/domains': '域名与证书',
     '/domains/acme-accounts': 'ACME 账户管理', '/settings': '面板设置',
     '/server/monitor': '服务器监控', '/server/processes': '实时进程',
   }

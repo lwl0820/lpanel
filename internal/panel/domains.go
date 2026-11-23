@@ -416,7 +416,14 @@ func (a *App) renderNginx(items []Binding, marker string, config Config, challen
 			// 只有启用操作消费实际入口地址。老代理一律覆盖 Host 为不带端口的 $host。
 			fmt.Fprintf(&out, "location = %s/enable { proxy_pass http://%s; proxy_set_header Host $host:$server_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-LPanel-Proxy 2; proxy_set_header X-LPanel-Client-IP %s; proxy_set_header X-LPanel-Server-IP $server_addr; proxy_set_header X-LPanel-Redirect \"\"; }\n", firewallAPI, config.Listen, clientAddr)
 			// 上传交给已鉴权的后端流式读取，避免代理先把整个文件写入临时目录。
-			fmt.Fprintf(&out, "location = /api/v1/server/files/upload { client_max_body_size 0; proxy_request_buffering off; proxy_http_version 1.1; %s proxy_set_header X-LPanel-Redirect \"\"; }\n", proxy)
+			for _, upload := range []string{"/api/v1/server/files/upload", "/api/v1/projects/import"} {
+				timeout := ""
+				if upload == "/api/v1/projects/import" {
+					timeout = "proxy_read_timeout 1h; "
+				}
+				fmt.Fprintf(&out, "location = %s { client_max_body_size 0; proxy_request_buffering off; proxy_http_version 1.1; %s%s proxy_set_header X-LPanel-Redirect \"\"; }\n", upload, timeout, proxy)
+			}
+			fmt.Fprintf(&out, "location ~ ^/api/v1/projects/[^/]+/export$ { proxy_buffering off; proxy_read_timeout 1h; %s proxy_set_header X-LPanel-Redirect \"\"; }\n", proxy)
 			// 文本按解码后的字节数限制；JSON 转义后的请求可能更大。
 			fmt.Fprintf(&out, "location = /api/v1/server/files/text { client_max_body_size 7m; %s proxy_set_header X-LPanel-Redirect \"\"; }\n", proxy)
 			out.WriteString("location = /.lpanel/config { default_type text/plain; ")

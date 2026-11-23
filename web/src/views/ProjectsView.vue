@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, shallowReactive } from 'vue'
+import { computed, onMounted, reactive, ref, shallowReactive, useTemplateRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type ButtonInstance, type FormInstance, type FormRules } from 'element-plus'
-import { projects, type ContainerAction, type Project, type ProjectContainer, type ProjectPort } from '../projects-api'
+import { projects, type ContainerAction, type Project, type ProjectContainer, type ProjectPort, type ProjectSaveResult } from '../projects-api'
 import { domains, type Binding } from '../domain-api'
 import { useOperation } from '../useOperation'
 import { errorText, formatTime } from '../format'
@@ -77,7 +77,7 @@ async function load() {
 // 概览“开始使用”跳转时带 ?new=1，直接打开新建
 const route = useRoute()
 const router = useRouter()
-onMounted(() => { void load(); if (route.query.new) { void edit(); void router.replace('/projects') } })
+onMounted(() => { void load() })
 async function reload() { loading.value = true; await load() }
 const domainsOf = (id: string) => bindings.value.filter(b => b.kind === 'project' && b.resource_id === id)
 const verbs = { start: ['启动', '已启动'], stop: ['停止', '已停止'], restart: ['重启', '已重启'], delete: ['删除', '已删除'] }
@@ -203,18 +203,58 @@ async function save() {
       ? await projects.update(selected.value.id, projectInput.value)
       : await projects.create(projectInput.value)
     editor.value = false
-    if (result.operation) {
-      void track(result.operation, `部署 ${result.name}`, `${result.name} 部署完成`).then(outcome => {
-        if (outcome) void refreshStatus(result.id)
-      })
-    } else if (result.deployment_error) {
-      ElMessage.warning(result.deployment_error)
-    }
-    await load()
+    await showDeployment(result)
   } catch (e) {
     editorError.value = errorText(e, '保存失败')
   } finally {
     saving.value = false
+  }
+}
+
+async function showDeployment(result: ProjectSaveResult) {
+  if (result.operation) {
+    void track(result.operation, `部署 ${result.name}`, `${result.name} 部署完成`).then(outcome => {
+      if (outcome) void refreshStatus(result.id)
+    })
+  } else if (result.deployment_error) {
+    ElMessage.warning(result.deployment_error)
+  }
+  await load()
+}
+
+const importOpen = ref(false)
+const importing = ref(false)
+const importError = ref('')
+const archiveInput = useTemplateRef('archiveInput')
+const exportFrame = useTemplateRef('exportFrame')
+
+function showExportError() {
+  const response = exportFrame.value?.contentDocument
+  if (response?.URL === 'about:blank') return
+  // ZIP 响应交给浏览器下载，只有错误页面会在框架里加载。
+  let message = '无法导出项目，请稍后重试'
+  try {
+    const body = JSON.parse(response?.body?.textContent ?? '')
+    if (typeof body?.error?.message === 'string') message = body.error.message
+  } catch {
+    // 代理返回的错误页可能不是 JSON。
+  }
+  ElMessage.error(message)
+}
+
+async function importProject() {
+  const file = archiveInput.value?.files?.[0]
+  if (!file || importing.value) return
+  importing.value = true
+  importError.value = ''
+  try {
+    const result = await projects.importArchive(file)
+    importOpen.value = false
+    await showDeployment(result)
+  } catch (e) {
+    importError.value = errorText(e, '导入项目失败')
+  } finally {
+    importing.value = false
   }
 }
 // 日志抽屉独立于配置编辑，可查看项目或单个容器
@@ -261,16 +301,23 @@ async function bound(result: BindResult) {
   if (result.operation) { if (await track(result.operation, `为 ${result.domain} 申请证书`, `${result.domain} 证书已启用`)) await load(); return }
   ElMessage.success('域名已绑定'); await load()
 }
-const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.name}` : '新建容器项目')
+const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.name}` : '新建编排项目')
+watch(() => route.query.new, (value) => {
+  if (route.path !== '/projects' || value !== '1') return
+  void edit()
+  void router.replace({ query: { ...route.query, new: undefined } })
+}, { immediate: true })
 </script>
 <template>
-  <PageHeader title="容器项目" description="用 Docker Compose 部署和管理应用。">
+  <PageHeader title="编排项目" description="用 Docker Compose 部署和管理应用。">
     <el-button :disabled="busy || loading" @click="reload"><AppIcon name="refresh"/>刷新</el-button>
+    <el-button :disabled="busy || importing" @click="importError = ''; importOpen = true">导入项目</el-button>
     <el-button type="primary" :disabled="busy" @click="edit()"><AppIcon name="plus"/>新建项目</el-button>
   </PageHeader>
+  <iframe ref="exportFrame" name="project-export" title="项目导出" sandbox="allow-same-origin allow-downloads" hidden @load="showExportError"/>
   <OperationBanner :operation="operation" :label="operationLabel" @close="operation = null"/>
   <div class="panel">
-    <ListState :loading="loading" :error="loadError" :empty="!items.length" icon="projects" title="还没有容器项目" description="新建项目时粘贴 Compose 配置，面板会自动部署。" @retry="reload">
+    <ListState :loading="loading" :error="loadError" :empty="!items.length" icon="projects" title="还没有编排项目" description="新建项目时粘贴 Compose 配置，面板会自动部署。" @retry="reload">
       <template #empty-action><el-button type="primary" :disabled="busy" @click="edit()"><AppIcon name="plus"/>新建项目</el-button></template>
       <div class="tbl-wrap">
         <table class="rtable project-table">
@@ -305,6 +352,7 @@ const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.nam
                     </el-button>
                     <el-button size="small" :disabled="busy || !containers.length" @click="action(item, 'restart')"><AppIcon name="restart"/>重启</el-button>
                     <el-button size="small" :disabled="busy" @click="edit(item)"><AppIcon name="edit"/>编辑</el-button>
+                    <el-button tag="a" size="small" :href="projects.exportURL(item.id)" :aria-label="`导出 ${item.name}`" target="project-export">导出</el-button>
                     <RowMenu :items="menu(item)" :label="item.name" :disabled="busy"/>
                   </span>
                 </td>
@@ -348,6 +396,19 @@ const editorTitle = computed(() => selected.value ? `编辑 ${selected.value.nam
       </div>
     </ListState>
   </div>
+  <el-dialog v-model="importOpen" title="导入项目" width="min(520px, calc(100vw - 32px))" append-to-body destroy-on-close :close-on-click-modal="false" :close-on-press-escape="!importing" :show-close="!importing">
+    <form id="project-import" action="/api/v1/projects/import" method="post" class="project-import" @submit.prevent="importProject">
+      <label for="project-archive">项目压缩包</label>
+      <input id="project-archive" ref="archiveInput" name="archive" type="file" accept=".zip,application/zip" required :disabled="importing" aria-describedby="project-import-help" @change="importError = ''"/>
+      <p id="project-import-help" class="muted">选择面板导出的 ZIP 文件。导入成功后会自动部署。</p>
+      <p v-if="importing" role="status">正在上传并导入项目…</p>
+      <el-alert v-if="importError" :title="importError" type="error" :closable="false" show-icon/>
+    </form>
+    <template #footer>
+      <el-button :disabled="importing" @click="importOpen = false">取消</el-button>
+      <el-button type="primary" native-type="submit" form="project-import" :loading="importing">导入并部署</el-button>
+    </template>
+  </el-dialog>
   <el-drawer v-model="editor" :title="editorTitle" size="min(720px, 100vw)" :close-on-click-modal="false" append-to-body class="app-drawer">
     <template #header><div><h2>{{ editorTitle }}</h2><p v-if="selected">保存后将重新部署项目。</p></div></template>
     <div v-loading="editorLoading" class="drawer-body">

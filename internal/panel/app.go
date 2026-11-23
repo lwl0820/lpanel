@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	_ "modernc.org/sqlite"
 	"net/http"
 	"os"
@@ -182,7 +184,27 @@ func (a *App) setConfig(config Config) {
 	a.configMu.Unlock()
 }
 
+// 旧版升级程序只会重启服务，已有面板入口的上传规则由新版服务补齐。
+func (a *App) refreshProjectImportProxy(ctx context.Context) error {
+	path := filepath.Join(a.currentConfig().NginxConfigDir, "lpanel.conf")
+	config, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !bytes.HasPrefix(config, []byte("# 本文件由 LPanel 管理\n")) ||
+		bytes.Contains(config, []byte("location = /api/v1/projects/import {")) {
+		return nil
+	}
+	return a.ApplyNginx(ctx)
+}
+
 func (a *App) Serve(ctx context.Context) error {
+	if err := a.refreshProjectImportProxy(ctx); err != nil {
+		log.Printf("更新项目导入的 Nginx 配置失败：%v", err)
+	}
 	if _, err := a.DB.Exec("UPDATE operations SET status='failed',error='服务重启，操作已中断' WHERE status IN ('queued','running') AND kind!='upgrade'"); err != nil {
 		return err
 	}
