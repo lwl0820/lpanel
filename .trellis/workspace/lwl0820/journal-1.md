@@ -600,3 +600,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 21: 编排项目迁移与容器管理导航
+<!-- trellis-session: v=2 fp=2921ba6396993f92 -->
+
+**Date**: 2026-11-23
+**Task**: 编排项目迁移与容器管理导航
+**Branch**: `codex/compose-project-folder`
+
+### Summary
+
+完成完整项目目录 ZIP 迁移、导入即部署和容器管理双标签入口，通过浏览器、真实 Nginx 和 Docker 验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5525f6a` | feat: 支持编排项目跨服务器迁移并合并容器管理入口 |
+
+### Status
+
+[OK] **Completed**
