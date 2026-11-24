@@ -3,8 +3,10 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -56,6 +58,111 @@ func TestProjectStatusJSONFormats(t *testing.T) {
 		t.Fatalf("IPv6错误：%s %v", ipv6, err)
 	}
 }
+
+func TestProjectRuntimePortsAndBinding(t *testing.T) {
+	a, root := testApp(t)
+	p := Project{ID: "runtime", Name: "运行端口", Directory: filepath.Join(root, "data/projects", "运行端口"), Compose: "services: {}"}
+	if err := a.writeProjectFiles(p, p.Directory); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DB.ExecContext(t.Context(), "INSERT INTO projects(id,name,compose,environment,updated_at,directory,custom_ports) VALUES(?,?,?,?,?,?,?)", p.ID, p.Name, p.Compose, "", "", p.Name, "[18080]"); err != nil {
+		t.Fatal(err)
+	}
+	a.Config.NginxConfigDir = filepath.Join(root, "nginx")
+	a.NginxProbe = func(context.Context, string, string, string) error { return nil }
+	listener, err := net.Listen("tcp4", "127.0.0.2:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	hostPort := listener.Addr().(*net.TCPAddr).Port
+
+	status := `[{"ID":"stopped","Service":"unused","State":"exited","Publishers":[{"URL":"0.0.0.0","TargetPort":80,"PublishedPort":31234,"Protocol":"tcp"}]},
+	{"ID":"web-a","Service":"web","State":"running","Publishers":[{"URL":"::","TargetPort":80,"PublishedPort":32345,"Protocol":"tcp"},{"TargetPort":90,"Protocol":"tcp"},{"TargetPort":80,"PublishedPort":32346,"Protocol":"udp"}]},
+	{"ID":"web-b","Service":"web","State":"running","Publishers":[{"URL":"0.0.0.0","TargetPort":80,"PublishedPort":32347,"Protocol":"tcp"}]},
+	{"ID":"host-a","Service":"_web","State":"running"},{"ID":"host-b","Service":"_web","State":"running"},{"ID":"broken","Service":"other","State":"running"}]`
+	a.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "nginx" || name == "systemctl" {
+			return nil, nil
+		}
+		switch args[0] {
+		case "compose":
+			if args[9] == "ps" {
+				return []byte(status), nil
+			}
+			return nil, nil
+		case "inspect":
+			switch args[len(args)-1] {
+			case "host-a", "host-b":
+				return []byte("host\n"), nil
+			case "web-a", "web-b":
+				return []byte("runtime_default\n"), nil
+			case "broken":
+				return nil, errors.New("容器已退出")
+			}
+		case "top":
+			return fmt.Appendf(nil, "PID\n%d\n", os.Getpid()), nil
+		}
+		t.Fatalf("意外的命令：%s %v", name, args)
+		return nil, nil
+	}
+	login := call(a, "POST", "/api/v1/auth/login", `{"username":"管理员","password":"test-password"}`, nil)
+	cookie := login.Result().Cookies()[0]
+	path := "/api/v1/projects/" + p.ID
+	w := call(a, "GET", path+"/runtime-ports", "", cookie)
+	var result struct {
+		Ports   []ProjectRuntimePort `json:"ports"`
+		Running bool                 `json:"running"`
+		Warning string               `json:"warning"`
+	}
+	if err := jsonv2.Unmarshal(w.Body.Bytes(), &result); err != nil || w.Code != 200 || !result.Running || result.Warning == "" {
+		t.Fatalf("运行端口读取结果有误：%d %s %v", w.Code, w.Body.String(), err)
+	}
+	want := []ProjectRuntimePort{
+		{Source: "published", Service: "web", HostIP: "::1", HostPort: 32345, ContainerPort: 80},
+		{Source: "host", Service: "_web", HostIP: "127.0.0.2", HostPort: hostPort},
+	}
+	if !slices.Equal(result.Ports, want) {
+		t.Fatalf("发布映射或监听去重有误：%v", result.Ports)
+	}
+	w = call(a, "POST", path+"/bindings", fmt.Sprintf(`{"domain":"runtime.example.com","scheme":"https","listen_target":{"service":"_web","host_ip":"127.0.0.2","host_port":%d}}`, hostPort), cookie)
+	var created struct {
+		Binding Binding `json:"binding"`
+	}
+	if err := jsonv2.Unmarshal(w.Body.Bytes(), &created); err != nil || w.Code != 200 || created.Binding.Upstream != "https://"+listener.Addr().String() || created.Binding.HostPort != hostPort || created.Binding.Service != "_web" {
+		t.Fatalf("监听绑定结果有误：%d %s %v", w.Code, w.Body.String(), err)
+	}
+	for _, target := range []string{
+		fmt.Sprintf(`"listen_target":{"service":"web","host_ip":"127.0.0.2","host_port":%d}`, hostPort),
+		fmt.Sprintf(`"listen_target":{"service":"_web","host_ip":"127.0.0.1","host_port":%d}`, hostPort),
+		fmt.Sprintf(`"host_port":18080,"listen_target":{"service":"_web","host_ip":"127.0.0.2","host_port":%d}`, hostPort),
+	} {
+		if w := call(a, "POST", path+"/bindings", `{"domain":"invalid.example.com","scheme":"http",`+target+"}", cookie); w.Code != 400 {
+			t.Fatalf("应拒绝混合或不存在的目标：%d %s", w.Code, w.Body.String())
+		}
+	}
+	status = `[]`
+	w = call(a, "GET", path+"/runtime-ports", "", cookie)
+	result.Warning = ""
+	if err := jsonv2.Unmarshal(w.Body.Bytes(), &result); err != nil || w.Code != 200 || result.Running || result.Ports == nil || len(result.Ports) != 0 {
+		t.Fatalf("无运行容器时应返回空列表：%d %s %v", w.Code, w.Body.String(), err)
+	}
+	status = `读取状态失败`
+	if w := call(a, "GET", path+"/runtime-ports", "", cookie); w.Code != 502 {
+		t.Fatalf("状态读取失败应返回 502：%d %s", w.Code, w.Body.String())
+	}
+	w = call(a, "POST", path+"/bindings", `{"domain":"manual.example.com","scheme":"http","host_port":18080}`, cookie)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "http://127.0.0.1:18080") {
+		t.Fatalf("手动端口绑定失败：%d %s", w.Code, w.Body.String())
+	}
+	if _, err := a.runProjectAction(t.Context(), p.ID, "deploy", false); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := a.binding(t.Context(), created.Binding.ID); err != nil || b.Upstream != created.Binding.Upstream {
+		t.Fatalf("重新部署应保留固定监听上游：%+v %v", b, err)
+	}
+}
+
 func TestProjectSaveAndSecrets(t *testing.T) {
 	a, root := testApp(t)
 	// 路由由入口注册，测试也允许单独加载模块。

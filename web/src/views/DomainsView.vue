@@ -46,7 +46,9 @@ function target(b: Binding) {
   if (b.kind === 'panel') return { name: '本面板', detail: '' }
   if (b.kind === 'project') return {
     name: projectList.value.find(p => p.id === b.resource_id)?.name ?? '已删除的项目',
-    detail: b.host_port ? `自定义端口 ${b.host_port}` : `${b.service}:${b.container_port}`,
+    detail: b.host_port
+      ? b.service ? `宿主机监听 ${b.service} · ${b.upstream}` : `自定义端口 ${b.host_port}`
+      : `${b.service}:${b.container_port}`,
   }
   const site = siteList.value.find(s => s.id === b.resource_id)
   return { name: site?.identifier ?? '已删除的网站', detail: b.directory || site?.directory || '' }

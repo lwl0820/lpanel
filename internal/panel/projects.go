@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net"
 	"net/http"
 	"net/url"
@@ -61,6 +62,22 @@ type ProjectContainer struct {
 	ExitCode   int                `json:"ExitCode"`
 	Publishers []ProjectPublisher `json:"Publishers"`
 }
+
+type ProjectRuntimePort struct {
+	Source        string `json:"source"`
+	Service       string `json:"service"`
+	HostIP        string `json:"host_ip"`
+	HostPort      int    `json:"host_port"`
+	ContainerPort int    `json:"container_port,omitzero"`
+}
+
+type projectListenTarget struct {
+	Service  string `json:"service"`
+	HostIP   string `json:"host_ip"`
+	HostPort int    `json:"host_port"`
+}
+
+var projectServiceName = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 
 type projectLock struct {
 	mutex sync.Mutex
@@ -162,6 +179,7 @@ func (a *App) RegisterProjectRoutes() error {
 		}
 		WriteJSON(w, 200, items)
 	})))
+	a.Mux.Handle("GET /api/v1/projects/{id}/runtime-ports", a.RequireAuth(http.HandlerFunc(a.projectRuntimePorts)))
 	a.Mux.Handle("GET /api/v1/projects/{id}", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := a.project(r.Context(), r.PathValue("id"))
 		if err != nil {
@@ -781,27 +799,109 @@ func (a *App) projectContainerAction(w http.ResponseWriter, r *http.Request) {
 	}
 	WriteJSON(w, 200, map[string]string{"message": "容器已" + label})
 }
-func projectUpstream(items []ProjectContainer, service string, port int, scheme string) (string, error) {
-	for _, item := range items {
-		if item.Service != service || item.State != "running" {
-			continue
-		}
-		for _, pub := range item.Publishers {
-			if pub.TargetPort != port || pub.Protocol != "tcp" || pub.PublishedPort < 1 {
+func projectPublishedPorts(items []ProjectContainer) iter.Seq[ProjectRuntimePort] {
+	return func(yield func(ProjectRuntimePort) bool) {
+		for _, item := range items {
+			if item.State != "running" {
 				continue
 			}
-			host := pub.URL
-			if host == "" || host == "0.0.0.0" {
-				host = "127.0.0.1"
+			for _, pub := range item.Publishers {
+				if pub.Protocol != "tcp" || pub.TargetPort < 1 || pub.PublishedPort < 1 {
+					continue
+				}
+				host := pub.URL
+				switch host {
+				case "", "0.0.0.0":
+					host = "127.0.0.1"
+				case "::":
+					host = "::1"
+				}
+				if !yield(ProjectRuntimePort{
+					Source: "published", Service: item.Service, ContainerPort: pub.TargetPort,
+					HostIP: host, HostPort: pub.PublishedPort,
+				}) {
+					return
+				}
 			}
-			if host == "::" {
-				host = "::1"
-			}
-			return scheme + "://" + net.JoinHostPort(host, strconv.Itoa(pub.PublishedPort)), nil
+		}
+	}
+}
+
+func (port ProjectRuntimePort) upstream(scheme string) string {
+	return scheme + "://" + net.JoinHostPort(port.HostIP, strconv.Itoa(port.HostPort))
+}
+
+func projectUpstream(items []ProjectContainer, service string, port int, scheme string) (string, error) {
+	for candidate := range projectPublishedPorts(items) {
+		if candidate.Service == service && candidate.ContainerPort == port {
+			return candidate.upstream(scheme), nil
 		}
 	}
 	return "", fmt.Errorf("目标服务没有可用的已发布 TCP 端口，请先部署并启动项目")
 }
+
+func (a *App) projectHostPorts(ctx context.Context, items []ProjectContainer, service string) ([]ProjectRuntimePort, bool) {
+	var ports []ProjectRuntimePort
+	incomplete := false
+	seen := make(map[ProjectRuntimePort]bool)
+	for _, item := range items {
+		if item.State != "running" || (service != "" && item.Service != service) {
+			continue
+		}
+		listeners, err := a.projectHostListeners(ctx, item)
+		if err != nil {
+			incomplete = true
+		}
+		for _, port := range listeners {
+			if !seen[port] {
+				seen[port] = true
+				ports = append(ports, port)
+			}
+		}
+	}
+	return ports, incomplete
+}
+
+func (a *App) projectRuntimePorts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	p, err := a.project(ctx, r.PathValue("id"))
+	if err != nil {
+		WriteError(w, 404, "not_found", "项目不存在")
+		return
+	}
+	items, err := a.ProjectStatus(ctx, p)
+	if err != nil {
+		WriteError(w, 502, "docker_error", a.redactProjectOutput(p, err.Error()))
+		return
+	}
+	result := struct {
+		Ports   []ProjectRuntimePort `json:"ports"`
+		Running bool                 `json:"running"`
+		Warning string               `json:"warning,omitempty"`
+	}{
+		Ports:   []ProjectRuntimePort{},
+		Running: slices.ContainsFunc(items, func(item ProjectContainer) bool { return item.State == "running" }),
+	}
+	type publishedTarget struct {
+		service string
+		port    int
+	}
+	seen := make(map[publishedTarget]bool)
+	for port := range projectPublishedPorts(items) {
+		target := publishedTarget{service: port.Service, port: port.ContainerPort}
+		if !seen[target] {
+			seen[target] = true
+			result.Ports = append(result.Ports, port)
+		}
+	}
+	hostPorts, incomplete := a.projectHostPorts(ctx, items, "")
+	result.Ports = append(result.Ports, hostPorts...)
+	if incomplete {
+		result.Warning = "部分容器的监听端口读取失败，请重试"
+	}
+	WriteJSON(w, 200, result)
+}
+
 func (a *App) runProjectAction(ctx context.Context, id, action string, removeFiles bool) (string, error) {
 	unlock := a.lockProject(id)
 	defer unlock()
@@ -945,13 +1045,14 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Domain          string `json:"domain"`
-		Service         string `json:"service"`
-		ContainerPort   int    `json:"container_port"`
-		HostPort        *int   `json:"host_port"`
-		Scheme          string `json:"scheme"`
-		AutoCertificate bool   `json:"auto_certificate"`
-		ACMEAccountID   string `json:"acme_account_id"`
+		Domain          string               `json:"domain"`
+		Service         string               `json:"service"`
+		ContainerPort   int                  `json:"container_port"`
+		HostPort        *int                 `json:"host_port"`
+		ListenTarget    *projectListenTarget `json:"listen_target"`
+		Scheme          string               `json:"scheme"`
+		AutoCertificate bool                 `json:"auto_certificate"`
+		ACMEAccountID   string               `json:"acme_account_id"`
 	}
 	if !ReadJSON(w, r, &input) {
 		return
@@ -961,19 +1062,46 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b := Binding{Kind: "project", ResourceID: p.ID, Domain: input.Domain, AutoCertificate: input.AutoCertificate}
-	if input.HostPort != nil {
-		if input.Service != "" || input.ContainerPort != 0 {
-			WriteError(w, 400, "invalid_target", "请选择一个端口作为绑定目标")
+	if input.HostPort != nil && input.ListenTarget != nil ||
+		(input.HostPort != nil || input.ListenTarget != nil) && (input.Service != "" || input.ContainerPort != 0) {
+		WriteError(w, 400, "invalid_target", "请选择一个端口作为绑定目标")
+		return
+	}
+	switch target := input.ListenTarget; {
+	case target != nil:
+		if !projectServiceName.MatchString(target.Service) || net.ParseIP(target.HostIP) == nil || target.HostPort < 1 || target.HostPort > 65535 {
+			WriteError(w, 400, "invalid_target", "请选择有效的监听地址和端口")
 			return
 		}
+		items, err := a.ProjectStatus(r.Context(), p)
+		if err != nil {
+			WriteError(w, 502, "docker_error", a.redactProjectOutput(p, err.Error()))
+			return
+		}
+		ports, incomplete := a.projectHostPorts(r.Context(), items, target.Service)
+		i := slices.IndexFunc(ports, func(port ProjectRuntimePort) bool {
+			return port.HostIP == target.HostIP && port.HostPort == target.HostPort
+		})
+		if i < 0 {
+			if incomplete {
+				WriteError(w, 502, "docker_error", "读取服务监听端口失败，请重试")
+				return
+			}
+			WriteError(w, 400, "unavailable_listener", "服务已不再监听此地址和端口，请重新打开绑定窗口后选择端口")
+			return
+		}
+		b.Service = ports[i].Service
+		b.HostPort = ports[i].HostPort
+		b.Upstream = ports[i].upstream(input.Scheme)
+	case input.HostPort != nil:
 		if !slices.Contains(p.CustomPorts, *input.HostPort) {
 			WriteError(w, 400, "invalid_target", "请选择此项目已保存的自定义端口")
 			return
 		}
 		b.HostPort = *input.HostPort
 		b.Upstream = fmt.Sprintf("%s://127.0.0.1:%d", input.Scheme, b.HostPort)
-	} else {
-		if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`).MatchString(input.Service) || input.ContainerPort < 1 || input.ContainerPort > 65535 {
+	default:
+		if !projectServiceName.MatchString(input.Service) || input.ContainerPort < 1 || input.ContainerPort > 65535 {
 			WriteError(w, 400, "invalid_target", "请选择有效服务和端口")
 			return
 		}

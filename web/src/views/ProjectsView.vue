@@ -340,7 +340,10 @@ function openLogs(project: Project, container?: ProjectContainer) {
 // 绑定域名
 const binding = ref(false)
 const preset = ref<BindPreset | null>(null)
-function bind(item: Project) { preset.value = { kind: 'project', id: item.id, name: item.name }; binding.value = true }
+function bind(item: Project) {
+  preset.value = { kind: 'project', id: item.id, name: item.name, customPorts: item.custom_ports }
+  binding.value = true
+}
 async function bound(result: BindResult) {
   if (result.operation) { if (await track(result.operation, `为 ${result.domain} 申请证书`, `${result.domain} 证书已启用`)) await load(); return }
   ElMessage.success('域名已绑定'); await load()
