@@ -120,6 +120,7 @@ async function action(item: Project, name: keyof typeof verbs, removeFiles = fal
 const menu = (item: Project): MenuItem[] => [
   { label: '绑定域名', icon: 'link', onSelect: () => bind(item) },
   { label: '项目日志', icon: 'log', onSelect: () => openLogs(item) },
+  { label: '项目目录', icon: 'folder', onSelect: () => { void router.push({ path: '/server/files', query: { path: item.directory } }) } },
   { label: '删除项目', icon: 'trash', danger: true, divided: true, onSelect: () => {
     deleteTarget.value = item
     deleteFiles.value = false

@@ -88,7 +88,7 @@ async function logout() {
             <RouterLink to="/server/time">时区与时间同步</RouterLink>
             <RouterLink to="/server/dns">DNS 设置</RouterLink>
           </nav>
-          <RouterView/>
+          <RouterView :key="route.path === '/server/files' ? route.fullPath : undefined"/>
         </div>
       </main>
     </div>

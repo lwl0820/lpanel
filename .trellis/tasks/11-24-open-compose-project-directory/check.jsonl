@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/api-contract.md", "reason": "按服务端登记目录跳转"}
+{"file": ".trellis/spec/backend/server-files.md", "reason": "复用目录读取接口和失败语义"}

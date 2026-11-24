@@ -14,7 +14,7 @@
 
 侧栏「容器管理」下的「编排项目」和「镜像管理」分别使用 /projects 和 /images。/projects?new=1 仍直达新建表单。导出使用同源附件下载；导入直接发送 ZIP 文件，收到项目保存结果后跟踪后台部署。
 
-容器项目信息包含服务端提供的 `directory`。用 `projects.status` 读取容器状态并用同一结果渲染项目状态和展开内容。单容器日志用 `projects.containerLogs` 请求容器 `ID` 对应的记录，项目汇总日志使用 `projects.logs`。
+容器项目信息包含服务端提供的 `directory`。「更多操作 → 项目目录」将这个实际路径作为 `/server/files` 的 `path` 查询参数传给文件管理，兼容目录仍以 ID 命名的项目。首次读取失败时重试同一路径，省略参数时从根目录打开。用 `projects.status` 读取容器状态并用同一结果渲染项目状态和展开内容。单容器日志用 `projects.containerLogs` 请求容器 `ID` 对应的记录，项目汇总日志使用 `projects.logs`。
 
 单容器启停通过 `projects.containerAction` 使用当前行的容器 ID，操作结束后重新读取项目状态。镜像页按完整镜像 ID 展示每组标签。删除和清理均需确认，对话框默认聚焦「取消」。成功或失败后刷新列表，失败时展示接口返回的原因。
 

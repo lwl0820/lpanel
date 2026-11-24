@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef, useTemplateRef } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, type ButtonInstance } from 'element-plus'
 import { APIError } from '../api'
 import { errorText, formatTime } from '../format'
@@ -9,6 +10,8 @@ import ListState from '../components/ListState.vue'
 import PageHeader from '../components/PageHeader.vue'
 import RowMenu, { type MenuItem } from '../components/RowMenu.vue'
 
+const { path } = useRoute().query
+const initialPath = typeof path === 'string' && path.startsWith('/') ? path : '/'
 const directory = shallowRef<ServerDirectory>()
 const loading = ref(false)
 const loadError = ref('')
@@ -24,7 +27,7 @@ const skippedNames = computed(() => directory.value?.skipped_names ?? 0)
 const rows = computed(() => entries.value.slice((page.value - 1) * pageSize, page.value * pageSize))
 const crumbs = computed(() => {
   const result = [{ name: '/', path: '/' }]
-  for (const name of (directory.value?.path ?? '/').slice(1).split('/').filter(Boolean)) {
+  for (const name of (directory.value?.path ?? initialPath).slice(1).split('/').filter(Boolean)) {
     result.push({ name, path: childPath(result[result.length - 1].path, name) })
   }
   return result
@@ -37,7 +40,7 @@ function childPath(path: string, name: string) {
   return path === '/' ? `/${name}` : `${path}/${name}`
 }
 
-async function loadDirectory(path = directory.value?.path ?? '/') {
+async function loadDirectory(path = directory.value?.path ?? initialPath) {
   if (loading.value) return
   loading.value = true
   loadError.value = ''
