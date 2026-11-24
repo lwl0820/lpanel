@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/hosting-contract.md", "reason": "核对编排项目、动作结果、域名绑定及上游刷新契约"}
+{"file": ".trellis/spec/frontend/api-contract.md", "reason": "核对项目菜单、后台操作跟踪与状态刷新"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "按仓库惯例验证项目命令及失败路径"}

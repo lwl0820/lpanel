@@ -80,7 +80,7 @@ const router = useRouter()
 onMounted(() => { void load() })
 async function reload() { loading.value = true; await load() }
 const domainsOf = (id: string) => bindings.value.filter(b => b.kind === 'project' && b.resource_id === id)
-const verbs = { start: ['启动', '已启动'], stop: ['停止', '已停止'], restart: ['重启', '已重启'], delete: ['删除', '已删除'] }
+const verbs = { start: ['启动', '已启动'], stop: ['停止', '已停止'], restart: ['重启', '已重启'], 'upgrade-images': ['升级镜像', '镜像升级完成'], delete: ['删除', '已删除'] }
 const changingContainer = ref('')
 async function changeContainer(project: Project, container: ProjectContainer) {
   const command = containerStates[container.State]?.action
@@ -118,6 +118,7 @@ async function action(item: Project, name: keyof typeof verbs, removeFiles = fal
   }
 }
 const menu = (item: Project): MenuItem[] => [
+  { label: '升级镜像', icon: 'refresh', onSelect: () => action(item, 'upgrade-images') },
   { label: '绑定域名', icon: 'link', onSelect: () => bind(item) },
   { label: '项目日志', icon: 'log', onSelect: () => openLogs(item) },
   { label: '项目目录', icon: 'folder', onSelect: () => { void router.push({ path: '/server/files', query: { path: item.directory } }) } },

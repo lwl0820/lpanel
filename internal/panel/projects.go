@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -234,7 +235,7 @@ func (a *App) RegisterProjectRoutes() error {
 		}
 		action := r.PathValue("action")
 		switch action {
-		case "deploy", "start", "stop", "restart", "delete":
+		case "deploy", "start", "stop", "restart", "upgrade-images", "delete":
 		default:
 			WriteError(w, 400, "invalid_action", "项目操作无效")
 			return
@@ -911,6 +912,9 @@ func (a *App) runProjectAction(ctx context.Context, id, action string, removeFil
 		return "", err
 	}
 
+	if action == "upgrade-images" {
+		return a.upgradeProjectImages(ctx, p)
+	}
 	if action == "delete" && removeFiles {
 		if err := a.checkProjectDirectoryForRemoval(p.Directory); err != nil {
 			return "", err
@@ -962,37 +966,151 @@ func (a *App) runProjectAction(ctx context.Context, id, action string, removeFil
 		}
 		return log, err
 	}
+	log := a.redactProjectOutput(p, string(out))
 	if action == "deploy" || action == "start" || action == "restart" {
-		bindings, e := a.ListBindings(ctx)
-		if e != nil {
-			return a.redactProjectOutput(p, string(out)), e
-		}
-		bindings = slices.DeleteFunc(bindings, func(b Binding) bool {
-			return b.Kind != "project" || b.ResourceID != p.ID || b.HostPort != 0
-		})
-		if len(bindings) == 0 {
-			return a.redactProjectOutput(p, string(out)), nil
-		}
-		items, e := a.ProjectStatus(ctx, p)
-		if e != nil {
-			return a.redactProjectOutput(p, string(out)), e
-		}
-		for _, b := range bindings {
-			scheme := "http"
-			if u, e := url.Parse(b.Upstream); e == nil && u.Scheme == "https" {
-				scheme = "https"
-			}
-			upstream, e := projectUpstream(items, b.Service, b.ContainerPort, scheme)
-			if e != nil {
-				return a.redactProjectOutput(p, string(out)), e
-			}
-			b.Upstream = upstream
-			if _, e = a.SaveBinding(ctx, b); e != nil {
-				return a.redactProjectOutput(p, string(out)), e
-			}
+		return log, a.refreshProjectBindings(ctx, p, nil, nil)
+	}
+	return log, nil
+}
+
+func (a *App) upgradeProjectImages(ctx context.Context, p Project) (string, error) {
+	items, err := a.ProjectStatus(ctx, p)
+	if err != nil {
+		return "", err
+	}
+	out, err := a.projectCommand(ctx, p, "config", "--format", "json")
+	if err != nil {
+		return "", err
+	}
+	type imageTarget struct {
+		Image    string `json:"image"`
+		Platform string `json:"platform"`
+	}
+	var config struct {
+		Services map[string]imageTarget `json:"services"`
+	}
+	if err := jsonv2.Unmarshal(projectJSON(out), &config); err != nil {
+		return "", fmt.Errorf("读取 Compose 镜像配置失败：%s", a.redactProjectOutput(p, err.Error()))
+	}
+	env, err := a.projectCommand(ctx, p, "config", "--environment")
+	if err != nil {
+		return "", err
+	}
+	var defaultPlatform string
+	for line := range bytes.SplitSeq(env, []byte("\n")) {
+		if platform, ok := bytes.CutPrefix(line, []byte("DOCKER_DEFAULT_PLATFORM=")); ok {
+			defaultPlatform = strings.TrimSpace(string(platform))
+			break
 		}
 	}
-	return a.redactProjectOutput(p, string(out)), nil
+
+	var log strings.Builder
+	pulled := make(map[imageTarget]bool)
+	for _, service := range slices.Sorted(maps.Keys(config.Services)) {
+		target := config.Services[service]
+		if target.Image == "" {
+			continue
+		}
+		target.Platform = cmp.Or(target.Platform, defaultPlatform)
+		config.Services[service] = target
+		if pulled[target] {
+			continue
+		}
+		args := []string{"image", "pull"}
+		if target.Platform != "" {
+			args = append(args, "--platform", target.Platform)
+		}
+		out, err := a.Command(ctx, "docker", append(args, "--", target.Image)...)
+		if err != nil {
+			return a.redactProjectOutput(p, log.String()), fmt.Errorf("拉取镜像失败：%s", a.redactProjectOutput(p, cmp.Or(strings.TrimSpace(string(out)), err.Error())))
+		}
+		log.Write(out)
+		pulled[target] = true
+	}
+	if len(pulled) == 0 {
+		return "项目没有可拉取的镜像", nil
+	}
+
+	imageIDs := make(map[string]string)
+	changed := make(map[string]bool)
+	running := make(map[string]bool)
+	for _, item := range items {
+		target := config.Services[item.Service]
+		if item.State != "running" || target.Image == "" || changed[item.Service] {
+			continue
+		}
+		// Compose 的一次性容器带有 oneoff 标签，不参与服务更新。
+		out, err := a.Command(ctx, "docker", "container", "inspect", "--format", `{{if ne (index .Config.Labels "com.docker.compose.oneoff") "True"}}{{.Image}}{{end}}`, "--", item.ID)
+		if err != nil {
+			return a.redactProjectOutput(p, log.String()), fmt.Errorf("读取容器镜像失败：%s", a.redactProjectOutput(p, cmp.Or(strings.TrimSpace(string(out)), err.Error())))
+		}
+		actualID := strings.TrimSpace(string(out))
+		if actualID == "" {
+			continue
+		}
+		running[item.Service] = true
+		if _, ok := imageIDs[target.Image]; !ok {
+			// containerd 存储下，容器的 Image 对应镜像引用本身的 ID。指定平台会返回子镜像的 ID。
+			out, err := a.Command(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", "--", target.Image)
+			if err != nil {
+				return a.redactProjectOutput(p, log.String()), fmt.Errorf("读取已拉取镜像失败：%s", a.redactProjectOutput(p, cmp.Or(strings.TrimSpace(string(out)), err.Error())))
+			}
+			imageIDs[target.Image] = strings.TrimSpace(string(out))
+		}
+		if actualID != imageIDs[target.Image] {
+			changed[item.Service] = true
+		}
+	}
+	if len(running) == 0 {
+		return a.redactProjectOutput(p, log.String()), nil
+	}
+	if len(changed) == 0 {
+		return a.redactProjectOutput(p, log.String()), a.refreshProjectBindings(ctx, p, running, items)
+	}
+	args := []string{"up", "-d", "--no-deps", "--no-build", "--pull", "never", "--"}
+	out, err = a.projectCommand(ctx, p, append(args, slices.Sorted(maps.Keys(changed))...)...)
+	log.Write(out)
+	if err != nil {
+		return a.redactProjectOutput(p, log.String()), err
+	}
+	return a.redactProjectOutput(p, log.String()), a.refreshProjectBindings(ctx, p, running, nil)
+}
+
+func (a *App) refreshProjectBindings(ctx context.Context, p Project, services map[string]bool, items []ProjectContainer) error {
+	bindings, err := a.ListBindings(ctx)
+	if err != nil {
+		return err
+	}
+	bindings = slices.DeleteFunc(bindings, func(b Binding) bool {
+		return b.Kind != "project" || b.ResourceID != p.ID || b.HostPort != 0 || (services != nil && !services[b.Service])
+	})
+	if len(bindings) == 0 {
+		return nil
+	}
+	if items == nil {
+		items, err = a.ProjectStatus(ctx, p)
+		if err != nil {
+			return err
+		}
+	}
+	for _, b := range bindings {
+		scheme := "http"
+		if u, err := url.Parse(b.Upstream); err == nil && u.Scheme == "https" {
+			scheme = "https"
+		}
+		upstream, err := projectUpstream(items, b.Service, b.ContainerPort, scheme)
+		if err != nil {
+			return err
+		}
+		if services != nil && b.Upstream == upstream {
+			continue
+		}
+		b.Upstream = upstream
+		if _, err := a.SaveBinding(ctx, b); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (a *App) checkProjectDirectory(dir string, allowMissing bool) error {
 	if filepath.Dir(dir) != a.projectDirectory("") || !validProjectDirectoryName(filepath.Base(dir)) {

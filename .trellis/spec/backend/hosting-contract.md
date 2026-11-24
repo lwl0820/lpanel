@@ -18,6 +18,7 @@
 - `GET /api/v1/projects/{id}/runtime-ports` 返回 `ports`、`running` 及可选的 `warning`。已发布 TCP 候选按服务名与容器端口表示，使用当前实际的宿主机端点。host 候选按服务名及监听地址、端口表示，只纳入当前项目容器进程持有的 TCP 监听套接字。某个服务的监听信息读取失败时，结果中保留已发现的可用端口。
 - `POST /api/v1/projects/{id}/bindings` 选择已发布端口时传 `service` 和 `container_port`，部署、启动或重启后按 Docker 当前的发布映射刷新上游。选择已保存的自定义端口时传 `host_port`，上游固定为所选 HTTP/HTTPS 协议下的 `127.0.0.1:<端口>`。选择 host 网络监听时传 `listen_target` 对象，包含 `service`、`host_ip`、`host_port`。保存前重新核对该服务当前监听的端点，绑定记录保存服务名、宿主机端口及固定上游地址。混用目标、提交过期监听或提交未列入该项目候选的手动端口时返回 400。移除候选后，现有绑定继续使用已保存的上游。
 - `PUT /api/v1/projects/{id}/bindings/{bindingID}` 原地更新该项目的现有绑定。传入域名、`scheme` 和证书设置；省略目标字段时按库内当前上游保留主机、端口和目标类型，新选目标使用创建接口的三类字段与校验。切换到固定目标后保留固定上游，切换到发布映射后按服务名和容器端口跟随重部署。域名不变且证书已启用时，沿用签发账户和到期时间。代理配置应用失败时恢复之前的绑定与配置。
+- `POST /api/v1/projects/{id}/actions/upgrade-images` 返回 `202` 和 `project_upgrade-images` 后台操作。按当前 Compose 配置的镜像引用与平台向仓库拉取，所有拉取成功后才更新使用旧镜像的运行中服务。已停止或尚未启动的服务只拉取镜像。升级完成时，按运行中服务的实际发布端口校正动态域名上游。若上次重建成功但绑定刷新失败，重试可在保留新容器的情况下恢复转发。
 - `POST /api/v1/projects/{id}/actions/delete` 返回 `202` 和后台操作。带 `?remove_files=true` 时同时清理该项目的目录，省略该参数时只移除目录根部的 `compose.yaml` 和 `.env`。
 - `POST /api/v1/sites` 接收 `hostnames` 字符串数组、`identifier`、`note`、`directory`、`spa` 和可选的 `auto_certificate`、`acme_account_id`。成功返回 `201`、顶层网站字段、`bindings` 数组及可选的 `operation` 或 `certificate_error`。`PUT /api/v1/sites/{id}` 保存 `identifier`、`note`、`directory` 和 `spa`。单独绑定域名与手动申请入口继续接受可选 `acme_account_id`。
 - `GET /api/v1/acme/accounts` 返回 `accounts`、`providers` 和 `default_account_id`。在该路径通过 POST 新增账户，通过 PUT 或 DELETE 操作 `/{id}` 下的账户。输入使用 `name`、`provider`、`email`、`agree_tos` 和可选的 `eab_kid`、`eab_hmac_key`。账户响应包含 `provider_name` 与 `needs_eab`。
@@ -110,6 +111,8 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 项目测试覆盖短/长端口、变量、expose、JSONL、实际端口更新和保留卷；LPANEL_DOCKER_INTEGRATION=1 开启真实 Docker 测试。域名测试覆盖配置标识匹配、重载 0 但配置未生效、探针超时、原 HTTP/HTTPS 保留、Host/SNI 和 CLI Open 不打断服务任务；网站测试覆盖目录/绑定同步、失败恢复和内容保留。升级测试覆盖语义版本、附件、校验下载、成功/失败回退及鉴权。tests/install-smoke.sh 在一次性 Debian 容器中验证安装分支，系统服务和包管理使用替身，不能等同真实服务器验收。
 项目测试验证新建和更新均返回可查询的部署操作，部署使用刚保存的配置，校验失败不启动部署。
+
+编排镜像升级须覆盖再次拉取同一标签、仓库拉取失败、已拉取新镜像但容器仍运行旧镜像，以及同项目内运行和停止服务并存。断言重建的服务名、未变化服务的容器 ID 和绑定后的实际端口。使用 containerd 镜像存储和多架构索引时，拉取遵守目标平台，比较容器的 `.Image` 和镜像引用未经平台筛选的 `.Id`。目标列表为空时，直接完成操作；没有服务参数的 Compose 启动命令会作用于整个项目。
 
 单容器日志测试覆盖同服务副本隔离、跨项目容器 ID 和日志脱敏。文件清理测试覆盖默认保留、勾选删除、数据边界和 Compose 失败时的记录保留。真实 Docker 用例核对同时清理项目目录后命名卷仍存在。升级用例须核对旧容器 ID 和挂载来源。默认清理后同名重建须验证 `env_file: .env` 与相对路径业务文件。端口扫描从候选环境文件插值；保存时在登记目录校验服务的相对引用。
 
