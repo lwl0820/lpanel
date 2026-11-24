@@ -1,7 +1,10 @@
 import { request, type Operation } from './api'
-export interface Project { id: string; name: string; compose?: string; environment?: string; updated_at: string; directory?: string; legacy_directory: boolean }
-export interface ProjectInput { id?: string; name: string; compose: string; environment: string }
+export interface Project { id: string; name: string; compose?: string; environment?: string; custom_ports?: number[]; updated_at: string; directory?: string; legacy_directory: boolean }
+export interface ProjectInput { id?: string; name: string; compose: string; environment: string; custom_ports?: number[] }
 export interface ProjectPort { service: string; container_port: number; published: string; host_ip: string; protocol: string; source: 'ports' | 'expose' }
+type ProjectBindingTarget = { host_port: number; service?: never; container_port?: never }
+  | (Pick<ProjectPort, 'service' | 'container_port'> & { host_port?: never })
+type ProjectBindingInput = ProjectBindingTarget & { domain: string; scheme: string; auto_certificate: boolean; acme_account_id?: string }
 export interface ProjectContainer { ID: string; Name: string; Service: string; State: string; Health: string; ExitCode: number; Publishers: { URL: string; TargetPort: number; PublishedPort: number; Protocol: string }[] | null }
 export type ContainerAction = 'start' | 'stop'
 export type ProjectSaveResult = Project & { operation?: Operation; deployment_error?: string }
@@ -18,6 +21,6 @@ export const projects = {
  logs: (id: string) => request<{ log: string }>(`/projects/${id}/logs`),
  containerLogs: (id: string, containerId: string) => request<{ log: string }>(`/projects/${id}/containers/${encodeURIComponent(containerId)}/logs`),
  containerAction: (id: string, containerId: string, action: ContainerAction) => request<{ message: string }>(`/projects/${id}/containers/${encodeURIComponent(containerId)}/actions/${action}`, { method: 'POST' }),
- bind: (id: string, input: { domain: string; service: string; container_port: number; scheme: string; auto_certificate: boolean; acme_account_id?: string }) => request<{ operation: Operation | null }>(`/projects/${id}/bindings`, { method: 'POST', body: JSON.stringify(input) }),
+ bind: (id: string, input: ProjectBindingInput) => request<{ operation: Operation | null }>(`/projects/${id}/bindings`, { method: 'POST', body: JSON.stringify(input) }),
  operation: (id: string) => request<Operation>(`/operations/${id}`),
 }

@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +34,7 @@ type Project struct {
 	Directory       string `json:"directory,omitempty"`
 	Compose         string `json:"compose,omitempty"`
 	Environment     string `json:"environment,omitempty"`
+	CustomPorts     []int  `json:"custom_ports"`
 	UpdatedAt       string `json:"updated_at"`
 	LegacyDirectory bool   `json:"legacy_directory"`
 }
@@ -99,12 +101,12 @@ func (a *App) migrateProjects() error {
 	defer tx.Rollback()
 	if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS projects(
 		id TEXT PRIMARY KEY, name TEXT NOT NULL, compose TEXT NOT NULL, environment TEXT NOT NULL, updated_at TEXT NOT NULL,
-		directory TEXT NOT NULL, legacy_directory INTEGER NOT NULL DEFAULT 0
+		directory TEXT NOT NULL, legacy_directory INTEGER NOT NULL DEFAULT 0, custom_ports TEXT NOT NULL DEFAULT '[]'
 	)`); err != nil {
 		return err
 	}
-	var hasDirectory bool
-	if err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name='directory')").Scan(&hasDirectory); err != nil {
+	var hasDirectory, hasCustomPorts bool
+	if err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name='directory'), EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name='custom_ports')").Scan(&hasDirectory, &hasCustomPorts); err != nil {
 		return err
 	}
 	if !hasDirectory {
@@ -113,6 +115,11 @@ func (a *App) migrateProjects() error {
 			ALTER TABLE projects ADD COLUMN legacy_directory INTEGER NOT NULL DEFAULT 0;
 			UPDATE projects SET directory=id, legacy_directory=1
 		`); err != nil {
+			return err
+		}
+	}
+	if !hasCustomPorts {
+		if _, err = tx.Exec("ALTER TABLE projects ADD COLUMN custom_ports TEXT NOT NULL DEFAULT '[]'"); err != nil {
 			return err
 		}
 	}
@@ -127,7 +134,7 @@ func (a *App) RegisterProjectRoutes() error {
 		return err
 	}
 	a.Mux.Handle("GET /api/v1/projects", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rows, err := a.DB.QueryContext(r.Context(), "SELECT id,name,directory,legacy_directory,updated_at FROM projects ORDER BY name")
+		rows, err := a.DB.QueryContext(r.Context(), "SELECT id,name,directory,legacy_directory,updated_at,custom_ports FROM projects ORDER BY name")
 		if err != nil {
 			WriteError(w, 500, "project_error", "读取项目失败")
 			return
@@ -137,7 +144,12 @@ func (a *App) RegisterProjectRoutes() error {
 		for rows.Next() {
 			var p Project
 			var directory string
-			if err = rows.Scan(&p.ID, &p.Name, &directory, &p.LegacyDirectory, &p.UpdatedAt); err != nil {
+			var customPorts []byte
+			if err = rows.Scan(&p.ID, &p.Name, &directory, &p.LegacyDirectory, &p.UpdatedAt, &customPorts); err != nil {
+				WriteError(w, 500, "project_error", "读取项目失败")
+				return
+			}
+			if err = jsonv2.Unmarshal(customPorts, &p.CustomPorts); err != nil {
 				WriteError(w, 500, "project_error", "读取项目失败")
 				return
 			}
@@ -257,15 +269,34 @@ func (a *App) projectDirectory(name string) string {
 func (a *App) project(ctx context.Context, id string) (Project, error) {
 	var p Project
 	var directory string
-	err := a.DB.QueryRowContext(ctx, "SELECT id,name,directory,legacy_directory,compose,environment,updated_at FROM projects WHERE id=?", id).
-		Scan(&p.ID, &p.Name, &directory, &p.LegacyDirectory, &p.Compose, &p.Environment, &p.UpdatedAt)
-	if err == nil {
-		if !validProjectDirectoryName(directory) {
-			return p, fmt.Errorf("无法确认项目目录，请检查项目记录")
-		}
-		p.Directory = a.projectDirectory(directory)
+	var customPorts []byte
+	err := a.DB.QueryRowContext(ctx, "SELECT id,name,directory,legacy_directory,compose,environment,updated_at,custom_ports FROM projects WHERE id=?", id).
+		Scan(&p.ID, &p.Name, &directory, &p.LegacyDirectory, &p.Compose, &p.Environment, &p.UpdatedAt, &customPorts)
+	if err != nil {
+		return p, err
 	}
-	return p, err
+	if !validProjectDirectoryName(directory) {
+		return p, fmt.Errorf("无法确认项目目录，请检查项目记录")
+	}
+	p.Directory = a.projectDirectory(directory)
+	return p, jsonv2.Unmarshal(customPorts, &p.CustomPorts)
+}
+
+const maxProjectCustomPort = 65535
+
+func normalizeProjectCustomPorts(ports []int) ([]int, error) {
+	unique := []int{}
+	seen := make(map[int]struct{})
+	for _, port := range ports {
+		if port < 1 || port > maxProjectCustomPort {
+			return nil, fmt.Errorf("自定义端口必须是 1 至 %d 的整数", maxProjectCustomPort)
+		}
+		if _, exists := seen[port]; !exists {
+			seen[port] = struct{}{}
+			unique = append(unique, port)
+		}
+	}
+	return unique, nil
 }
 
 func validProjectDirectoryName(name string) bool {
@@ -373,6 +404,14 @@ func (a *App) saveProject(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, status, code, err.Error())
 		return
 	}
+	if p.CustomPorts == nil {
+		p.CustomPorts = previous.CustomPorts
+	}
+	p.CustomPorts, err = normalizeProjectCustomPorts(p.CustomPorts)
+	if err != nil {
+		WriteError(w, 400, "invalid_custom_ports", err.Error())
+		return
+	}
 	if p.ID == "" {
 		p.ID = newProjectID()
 	}
@@ -445,10 +484,14 @@ func newProjectID() string {
 
 func (a *App) storeProject(ctx context.Context, p *Project) error {
 	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	_, err := a.DB.ExecContext(ctx, `INSERT INTO projects(id,name,compose,environment,updated_at,directory,legacy_directory) VALUES(?,?,?,?,?,?,?)
+	customPorts, err := jsonv2.Marshal(p.CustomPorts)
+	if err != nil {
+		return err
+	}
+	_, err = a.DB.ExecContext(ctx, `INSERT INTO projects(id,name,compose,environment,updated_at,directory,legacy_directory,custom_ports) VALUES(?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name,compose=excluded.compose,environment=excluded.environment,
-		updated_at=excluded.updated_at,directory=excluded.directory`,
-		p.ID, p.Name, p.Compose, p.Environment, p.UpdatedAt, filepath.Base(p.Directory), p.LegacyDirectory)
+		updated_at=excluded.updated_at,directory=excluded.directory,custom_ports=excluded.custom_ports`,
+		p.ID, p.Name, p.Compose, p.Environment, p.UpdatedAt, filepath.Base(p.Directory), p.LegacyDirectory, string(customPorts))
 	return err
 }
 
@@ -819,18 +862,21 @@ func (a *App) runProjectAction(ctx context.Context, id, action string, removeFil
 		return log, err
 	}
 	if action == "deploy" || action == "start" || action == "restart" {
-		items, e := a.ProjectStatus(ctx, p)
-		if e != nil {
-			return a.redactProjectOutput(p, string(out)), e
-		}
 		bindings, e := a.ListBindings(ctx)
 		if e != nil {
 			return a.redactProjectOutput(p, string(out)), e
 		}
+		bindings = slices.DeleteFunc(bindings, func(b Binding) bool {
+			return b.Kind != "project" || b.ResourceID != p.ID || b.HostPort != 0
+		})
+		if len(bindings) == 0 {
+			return a.redactProjectOutput(p, string(out)), nil
+		}
+		items, e := a.ProjectStatus(ctx, p)
+		if e != nil {
+			return a.redactProjectOutput(p, string(out)), e
+		}
 		for _, b := range bindings {
-			if b.Kind != "project" || b.ResourceID != p.ID {
-				continue
-			}
 			scheme := "http"
 			if u, e := url.Parse(b.Upstream); e == nil && u.Scheme == "https" {
 				scheme = "https"
@@ -902,6 +948,7 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 		Domain          string `json:"domain"`
 		Service         string `json:"service"`
 		ContainerPort   int    `json:"container_port"`
+		HostPort        *int   `json:"host_port"`
 		Scheme          string `json:"scheme"`
 		AutoCertificate bool   `json:"auto_certificate"`
 		ACMEAccountID   string `json:"acme_account_id"`
@@ -909,21 +956,41 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 	if !ReadJSON(w, r, &input) {
 		return
 	}
-	if (input.Scheme != "http" && input.Scheme != "https") || !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`).MatchString(input.Service) || input.ContainerPort < 1 || input.ContainerPort > 65535 {
-		WriteError(w, 400, "invalid_target", "请选择有效服务、端口和 HTTP/HTTPS 协议")
+	if input.Scheme != "http" && input.Scheme != "https" {
+		WriteError(w, 400, "invalid_target", "请选择 HTTP 或 HTTPS 协议")
 		return
 	}
-	items, err := a.ProjectStatus(r.Context(), p)
-	if err != nil {
-		WriteError(w, 502, "docker_error", err.Error())
-		return
+	b := Binding{Kind: "project", ResourceID: p.ID, Domain: input.Domain, AutoCertificate: input.AutoCertificate}
+	if input.HostPort != nil {
+		if input.Service != "" || input.ContainerPort != 0 {
+			WriteError(w, 400, "invalid_target", "请选择一个端口作为绑定目标")
+			return
+		}
+		if !slices.Contains(p.CustomPorts, *input.HostPort) {
+			WriteError(w, 400, "invalid_target", "请选择此项目已保存的自定义端口")
+			return
+		}
+		b.HostPort = *input.HostPort
+		b.Upstream = fmt.Sprintf("%s://127.0.0.1:%d", input.Scheme, b.HostPort)
+	} else {
+		if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`).MatchString(input.Service) || input.ContainerPort < 1 || input.ContainerPort > 65535 {
+			WriteError(w, 400, "invalid_target", "请选择有效服务和端口")
+			return
+		}
+		items, err := a.ProjectStatus(r.Context(), p)
+		if err != nil {
+			WriteError(w, 502, "docker_error", err.Error())
+			return
+		}
+		b.Upstream, err = projectUpstream(items, input.Service, input.ContainerPort, input.Scheme)
+		if err != nil {
+			WriteError(w, 400, "unpublished_port", err.Error())
+			return
+		}
+		b.Service = input.Service
+		b.ContainerPort = input.ContainerPort
 	}
-	upstream, err := projectUpstream(items, input.Service, input.ContainerPort, input.Scheme)
-	if err != nil {
-		WriteError(w, 400, "unpublished_port", err.Error())
-		return
-	}
-	b, err := a.SaveBindingWithAccount(r.Context(), Binding{Kind: "project", ResourceID: p.ID, Domain: input.Domain, Upstream: upstream, Service: input.Service, ContainerPort: input.ContainerPort, AutoCertificate: input.AutoCertificate}, input.ACMEAccountID)
+	b, err = a.SaveBindingWithAccount(r.Context(), b, input.ACMEAccountID)
 	if err != nil {
 		WriteError(w, 400, "binding_error", err.Error())
 		return

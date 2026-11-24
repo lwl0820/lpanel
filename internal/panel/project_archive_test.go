@@ -69,8 +69,12 @@ func TestProjectArchiveRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	ports := make([]int, maxProjectCustomPort)
+	for i := range ports {
+		ports[i] = i + 1
+	}
 	if err := source.storeProject(t.Context(), &Project{
-		ID: "legacy-project-id", Name: projectName, Directory: sourceDir, LegacyDirectory: true,
+		ID: "legacy-project-id", Name: projectName, Directory: sourceDir, LegacyDirectory: true, CustomPorts: ports,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -163,6 +167,10 @@ func TestProjectArchiveRoundTrip(t *testing.T) {
 		result.Name != projectName || result.Directory != targetDir || result.Operation.Kind != "project_deploy" {
 		t.Fatalf("导入结果错误：%+v", result)
 	}
+	stored, err := target.project(t.Context(), result.ID)
+	if err != nil || !slices.Equal(result.CustomPorts, ports) || !slices.Equal(stored.CustomPorts, ports) {
+		t.Fatalf("导入没有还原完整的自定义端口列表：%v", err)
+	}
 	waitProjectOperationStatus(t, target, result.Operation.ID, "failed")
 	for name, want := range files {
 		path := filepath.Join(targetDir, name)
@@ -244,7 +252,8 @@ func TestProjectArchiveImportsLegacyDisplayName(t *testing.T) {
 		Operation Operation
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || w.Code != 200 ||
-		result.Name != name || !result.LegacyDirectory || result.Directory != a.projectDirectory(result.ID) {
+		result.Name != name || !result.LegacyDirectory || result.Directory != a.projectDirectory(result.ID) ||
+		result.CustomPorts == nil || len(result.CustomPorts) != 0 {
 		t.Fatalf("旧项目恢复错误：%d %s %v", w.Code, w.Body, err)
 	}
 	waitProjectOperation(t, a, result.Operation.ID)

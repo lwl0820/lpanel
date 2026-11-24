@@ -9,12 +9,13 @@
 - RegisterProjectRoutes、RegisterSiteRoutes、RegisterUpgradeRoutes 在 Open 中创建表并注册接口；域名由 registerDomains 接入。
 - SaveBinding(ctx, Binding)、DeleteBinding(ctx, id)、ApplyNginx(ctx)、RequestCertificate(ctx, id)、RenewCertificates(ctx) 是项目、网站和面板复用的边界。需指定账户时使用 SaveBindingWithAccount 和 RequestCertificateWithAccount。
 - SaveSite(ctx, Site)、DeleteSite(ctx, id) 同步网站记录和关联绑定。
-- `POST /api/v1/projects` 和 `PUT /api/v1/projects/{id}` 接收 `name`、`compose` 和 `environment`。两者通过配置校验并保存后均提交 `project_deploy` 后台操作。响应为 `200`，项目字段在顶层，并附带 `operation`。
-- `GET /api/v1/projects/{id}/export` 返回 ZIP 附件，`POST /api/v1/projects/import` 接收 `application/zip` 原始请求体。导出按登记目录读取，导入在目标面板建立新的本地项目记录，响应和自动部署流程与新建项目一致。同名项目或目录返回 409。配置校验失败时清理本次导入目录。ZIP 以 project.json 记录显示名，files/ 保存项目目录，导入恢复普通权限位和数值 UID/GID。不能用作本地目录名的旧项目名称沿用 ID 目录机制。
+- `POST /api/v1/projects` 和 `PUT /api/v1/projects/{id}` 接收 `name`、`compose`、`environment` 和可选的整数数组 `custom_ports`。每项取值 1 至 65535，重复项保留首次出现的位置。旧项目初始列表为空，更新时省略该字段保留原值，传入 `[]` 清空。两者通过配置校验并保存后均提交 `project_deploy` 后台操作。响应为 `200`，项目字段在顶层，并附带 `operation`。
+- `GET /api/v1/projects/{id}/export` 返回 ZIP 附件，`POST /api/v1/projects/import` 接收 `application/zip` 原始请求体。导出按登记目录读取，导入在目标面板建立新的本地项目记录，响应和自动部署流程与新建项目一致。同名项目或目录返回 409。配置校验失败时清理本次导入目录。ZIP 的 `project.json` 记录显示名及可选的 `custom_ports` 数组，旧包导入时端口列表为空。`files/` 保存项目目录，导入恢复普通权限位和数值 UID/GID。不能用作本地目录名的旧项目名称沿用 ID 目录机制。
 - 新版服务启动时为已有的 LPanel 托管 Nginx 配置补齐导入代理规则，已包含该规则时跳过重载。刷新失败时记录日志并继续启动。
 - 项目响应的 `directory` 是登记目录的绝对路径。`GET /api/v1/projects/{id}/status` 返回容器列表，含 Docker 的 `ID`。`GET /api/v1/projects/{id}/containers/{containerID}/logs` 查询项目中的指定容器，返回 `{"log":"…"}`。项目汇总日志仍可通过 `GET /api/v1/projects/{id}/logs` 获取。
 - `POST /api/v1/projects/{id}/containers/{containerID}/actions/{action}` 接受 `start`、`stop`。以项目状态列表中的容器 ID 定位副本，成功返回 `200` 和 `message`。无效动作返回 `400`，容器不属于项目时返回 `404`，Docker 执行失败时返回 `502` 并按项目环境变量脱敏。
 - `GET /api/v1/images` 按完整镜像 ID 合并标签，返回数组，字段为 `id`、`tags`、`size`。无标签时返回空数组，大小沿用 Docker 格式化字符串。`DELETE /api/v1/images/{id}` 普通删除单个镜像，保留其未打标签的父镜像。引用或多个标签造成的冲突会返回 Docker 原因。`POST /api/v1/images/prune` 清理没有任何容器引用的镜像，包括带标签镜像，保留已停止容器的镜像。两个写接口均在 Docker 完成后返回 `200` 和 `message`。
+- `POST /api/v1/projects/{id}/bindings` 选择已发布端口时传 `service` 和 `container_port`，部署、启动或重启后按 Docker 当前的发布映射刷新上游。选择已保存的自定义端口时传 `host_port`，上游固定为所选 HTTP/HTTPS 协议下的 `127.0.0.1:<端口>`。混用两种目标或提交未列入该项目候选的 `host_port` 时返回 400。移除候选后，现有绑定继续使用已保存的上游。
 - `POST /api/v1/projects/{id}/actions/delete` 返回 `202` 和后台操作。带 `?remove_files=true` 时同时清理该项目的目录，省略该参数时只移除目录根部的 `compose.yaml` 和 `.env`。
 - `POST /api/v1/sites` 接收 `hostnames` 字符串数组、`identifier`、`note`、`directory`、`spa` 和可选的 `auto_certificate`、`acme_account_id`。成功返回 `201`、顶层网站字段、`bindings` 数组及可选的 `operation` 或 `certificate_error`。`PUT /api/v1/sites/{id}` 保存 `identifier`、`note`、`directory` 和 `spa`。单独绑定域名与手动申请入口继续接受可选 `acme_account_id`。
 - `GET /api/v1/acme/accounts` 返回 `accounts`、`providers` 和 `default_account_id`。在该路径通过 POST 新增账户，通过 PUT 或 DELETE 操作 `/{id}` 下的账户。输入使用 `name`、`provider`、`email`、`agree_tos` 和可选的 `eab_kid`、`eab_hmac_key`。账户响应包含 `provider_name` 与 `needs_eab`。
@@ -25,7 +26,7 @@
 
 ## 3. 数据与环境契约
 
-Binding 包含 id、kind(panel/project/site)、resource_id、domain、upstream、directory、spa、service、container_port、auto_certificate、certificate_status、certificate_error、expires_at 和实际签发账户 `certificate_account_id`。域名全局唯一。项目使用真实发布端口生成 upstream，网站使用 directory/spa，面板使用安装配置端口。
+Binding 包含 id、kind(panel/project/site)、resource_id、domain、upstream、directory、spa、service、container_port、host_port、auto_certificate、certificate_status、certificate_error、expires_at 和实际签发账户 `certificate_account_id`。域名全局唯一。项目绑定记录由 service 和 container_port 标识动态发布的端口，或由 host_port 标识固定的宿主机端口。网站使用 directory/spa，面板使用安装配置端口。
 
 证书账户从 SQLite 按加入顺序读取，最早的现有账户为默认。无账户时 `default_account_id` 为 `null`。面板提供商标识为 `letsencrypt`、`zerossl` 和 `google`，另支持旧自定义地址对应的兼容值。新账户用独立的 `Root/data/acme-accounts/<ID>`，已迁移旧账户用原 `Root/data/acme`。旧证书原地保留。签发使用所选账户，定时续期按绑定实际账户和域名读取 Certbot 保存的签发配置。
 

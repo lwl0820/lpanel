@@ -44,7 +44,10 @@ async function reload() { loading.value = true; await load() }
 const KIND = { panel: '面板', project: '编排项目', site: '静态网站' }
 function target(b: Binding) {
   if (b.kind === 'panel') return { name: '本面板', detail: '' }
-  if (b.kind === 'project') return { name: projectList.value.find(p => p.id === b.resource_id)?.name ?? '已删除的项目', detail: `${b.service}:${b.container_port}` }
+  if (b.kind === 'project') return {
+    name: projectList.value.find(p => p.id === b.resource_id)?.name ?? '已删除的项目',
+    detail: b.host_port ? `自定义端口 ${b.host_port}` : `${b.service}:${b.container_port}`,
+  }
   const site = siteList.value.find(s => s.id === b.resource_id)
   return { name: site?.identifier ?? '已删除的网站', detail: b.directory || site?.directory || '' }
 }

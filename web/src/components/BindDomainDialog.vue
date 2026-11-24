@@ -20,7 +20,9 @@ const formRef = ref<FormInstance>()
 const projectList = ref<Project[]>([])
 const siteList = ref<Site[]>([])
 const ports = ref<ProjectPort[]>([])
+const customPorts = ref<number[]>([])
 const scanning = ref(false)
+const scanError = ref('')
 const saving = ref(false)
 const error = ref('')
 const kind = computed(() => props.binding?.kind ?? form.target.split(':')[0])
@@ -50,16 +52,30 @@ watch(open, async value => {
   } catch (e) { error.value = errorText(e, '读取项目和网站失败') }
 })
 watch(requestsCertificate, value => { if (!value) form.accountId = '' })
-watch(() => form.target, () => { form.port = ''; ports.value = []; if (open.value && kind.value === 'project' && !props.binding) void scan() })
-async function scan() {
+watch([open, () => form.target], async ([isOpen], _, onCleanup) => {
+  form.port = ''
+  ports.value = []
+  customPorts.value = []
+  scanError.value = ''
+  scanning.value = false
+  if (!isOpen || kind.value !== 'project' || props.binding) return
+
+  let active = true
+  onCleanup(() => { active = false })
   const id = targetId.value
-  scanning.value = true; error.value = ''
+  scanning.value = true
   try {
     const p = await projects.get(id)
+    if (!active) return
+    customPorts.value = p.custom_ports ?? []
     const result = await projects.scan({ id: p.id, name: p.name, compose: p.compose ?? '', environment: p.environment ?? '' })
-    if (targetId.value === id) ports.value = result
-  } catch (e) { error.value = errorText(e, '扫描端口失败') } finally { scanning.value = false }
-}
+    if (active) ports.value = result
+  } catch (e) {
+    if (active) scanError.value = errorText(e, '读取服务端口失败')
+  } finally {
+    if (active) scanning.value = false
+  }
+})
 async function panelURL(domain: string) { try { return panelLoginURL(await domains.access(), domain, true) } catch { return '' } }
 async function submit() {
   if (saving.value || (requestsCertificate.value && !form.accountId) || !await formRef.value?.validate().catch(() => false)) return
@@ -74,8 +90,12 @@ async function submit() {
       operation = result.operation
       if (result.binding.kind === 'panel' && operation) accessURL = await panelURL(result.binding.domain)
     } else if (kind.value === 'project') {
-      const port = options.value[Number(form.port)]
-      operation = (await projects.bind(targetId.value, { domain, service: port.service, container_port: port.container_port, scheme: form.scheme, ...certOptions })).operation
+      const [source, value] = form.port.split(':')
+      const port = options.value[Number(value)]
+      const target = source === 'custom'
+        ? { host_port: Number(value) }
+        : { service: port.service, container_port: port.container_port }
+      operation = (await projects.bind(targetId.value, { domain, ...target, scheme: form.scheme, ...certOptions })).operation
     } else if (kind.value === 'site') {
       operation = (await sites.bind(targetId.value, { domain, ...certOptions })).operation
     } else {
@@ -104,12 +124,18 @@ async function submit() {
       </el-form-item>
       <template v-if="kind === 'project' && !binding">
         <el-form-item label="服务端口" prop="port">
-          <el-select v-model="form.port" :loading="scanning" :placeholder="scanning ? '正在扫描 Compose 配置…' : '选择已发布的 TCP 端口'" :disabled="scanning || !options.length">
-            <el-option v-for="(port, index) in options" :key="index" :value="String(index)" :label="`${port.service} · ${port.container_port} → ${port.published || '自动分配'}`"/>
+          <el-select v-model="form.port" placeholder="选择服务端口" :disabled="!options.length && !customPorts.length">
+            <el-option-group v-if="options.length" label="已发布 TCP 端口">
+              <el-option v-for="(port, index) in options" :key="index" :value="`published:${index}`" :label="`${port.service} · ${port.container_port} → ${port.published && port.published !== '0' ? port.published : '自动分配'}`"/>
+            </el-option-group>
+            <el-option-group v-if="customPorts.length" label="自定义端口">
+              <el-option v-for="port in customPorts" :key="port" :value="`custom:${port}`" :label="`自定义端口 ${port}`"/>
+            </el-option-group>
           </el-select>
-          <span class="hint">来自项目 Compose 配置的端口扫描结果。</span>
+          <span v-if="scanning" class="hint" role="status">正在扫描已发布端口…</span>
         </el-form-item>
-        <el-alert v-if="!scanning && !options.length && !error" title="没有可绑定的已发布 TCP 端口，请在 Compose 中添加 ports 映射。" type="info" :closable="false"/>
+        <el-alert v-if="scanError" :title="scanError" type="warning" :closable="false" show-icon/>
+        <el-alert v-else-if="!scanning && !options.length && !customPorts.length" title="请在项目中添加自定义端口，或在 Compose 中发布 TCP 端口。" type="info" :closable="false"/>
         <el-form-item label="上游协议"><el-radio-group v-model="form.scheme"><el-radio-button value="http">HTTP</el-radio-button><el-radio-button value="https">HTTPS</el-radio-button></el-radio-group></el-form-item>
       </template>
       <el-checkbox v-if="!wildcardSite" v-model="form.auto_certificate" name="auto_certificate">自动申请 HTTPS 证书</el-checkbox>
@@ -117,6 +143,6 @@ async function submit() {
       <p v-if="requestsCertificate" class="hint">申请证书需要公网 80 端口可达。</p>
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon/>
     </el-form>
-    <template #footer><el-button @click="open = false">取消</el-button><el-button type="primary" native-type="submit" :form="formId" :loading="saving" :disabled="scanning || (requestsCertificate && !form.accountId)">{{ binding ? '保存' : '绑定' }}</el-button></template>
+    <template #footer><el-button @click="open = false">取消</el-button><el-button type="primary" native-type="submit" :form="formId" :loading="saving" :disabled="(kind === 'project' && !binding && !options.length && !customPorts.length) || (requestsCertificate && !form.accountId)">{{ binding ? '保存' : '绑定' }}</el-button></template>
   </el-dialog>
 </template>

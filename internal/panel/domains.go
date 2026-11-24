@@ -37,6 +37,7 @@ type Binding struct {
 	SPA                  bool   `json:"spa"`
 	Service              string `json:"service"`
 	ContainerPort        int    `json:"container_port"`
+	HostPort             int    `json:"host_port,omitzero"`
 	AutoCertificate      bool   `json:"auto_certificate"`
 	CertificateStatus    string `json:"certificate_status"`
 	CertificateAccountID string `json:"certificate_account_id,omitempty"`

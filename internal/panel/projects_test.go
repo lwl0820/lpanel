@@ -668,7 +668,8 @@ func TestProjectLegacyDirectoryMigration(t *testing.T) {
 		}
 		for _, id := range []string{"legacy-a", "legacy-b"} {
 			p, err := reopened.project(t.Context(), id)
-			if err != nil || p.Name != "旧/项目" || !p.LegacyDirectory || p.Directory != filepath.Join(root, "data/projects", id) {
+			if err != nil || p.Name != "旧/项目" || !p.LegacyDirectory || p.Directory != filepath.Join(root, "data/projects", id) ||
+				p.CustomPorts == nil || len(p.CustomPorts) != 0 {
 				t.Fatalf("迁移项目有误：%+v %v", p, err)
 			}
 			if id == "legacy-a" && (p.Compose != "services: {}" || p.Environment != "LEGACY=yes" || p.UpdatedAt != "原更新时间") {

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"核对项目保存、上游刷新、项目迁移和域名契约"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"核对 SQLite 旧数据兼容和项目持久化"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"沿用表单、共享绑定弹窗及提示约定"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"同步项目与绑定接口类型"}

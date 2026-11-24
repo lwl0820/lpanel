@@ -25,10 +25,13 @@ const (
 	projectArchiveManifest = "project.json"
 	projectArchiveFiles    = "files/"
 	zipUnixOwnership       = 0x7875
+	// 每个端口最多占五位数字和一个逗号，另留空间保存转义后的名称和字段名。
+	projectArchiveManifestMaxSize = maxProjectCustomPort*6 + 4096
 )
 
 type projectArchiveMetadata struct {
-	Name string `json:"name"`
+	Name        string `json:"name"`
+	CustomPorts []int  `json:"custom_ports,omitempty"`
 }
 
 func (a *App) exportProject(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +85,7 @@ func writeProjectArchive(ctx context.Context, dst io.Writer, p Project) error {
 	if err != nil {
 		return err
 	}
-	if err := json.MarshalWrite(manifest, projectArchiveMetadata{Name: p.Name}); err != nil {
+	if err := json.MarshalWrite(manifest, projectArchiveMetadata{Name: p.Name, CustomPorts: p.CustomPorts}); err != nil {
 		return err
 	}
 	err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
@@ -178,7 +181,7 @@ func (a *App) importProject(w http.ResponseWriter, r *http.Request) {
 		if file.Name != projectArchiveManifest {
 			continue
 		}
-		if manifest != nil || !file.Mode().IsRegular() || file.UncompressedSize64 > 4096 {
+		if manifest != nil || !file.Mode().IsRegular() || file.UncompressedSize64 > projectArchiveManifestMaxSize {
 			WriteError(w, 400, "project_archive", "项目压缩包中的项目信息无效")
 			return
 		}
@@ -205,6 +208,11 @@ func (a *App) importProject(w http.ResponseWriter, r *http.Request) {
 	p := Project{ID: newProjectID(), Name: metadata.Name}
 	if strings.TrimSpace(p.Name) == "" || len(p.Name) > 100 || strings.ContainsRune(p.Name, 0) {
 		WriteError(w, 400, "invalid_name", "压缩包中的项目名称无效")
+		return
+	}
+	p.CustomPorts, err = normalizeProjectCustomPorts(metadata.CustomPorts)
+	if err != nil {
+		WriteError(w, 400, "invalid_custom_ports", err.Error())
 		return
 	}
 	directory := p.Name

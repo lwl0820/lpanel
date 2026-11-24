@@ -12,6 +12,8 @@
 
 `projects.create` 和 `projects.update` 都返回顶层项目字段及部署的 `operation`。项目保存成功但未能启动部署时返回 `deployment_error`。
 
+编排编辑器将自定义宿主机端口随项目的 `custom_ports` 保存。扫描结果单独展示，重复扫描保留当前草稿。从项目页或域名页打开绑定弹窗时，项目详情提供自定义候选，扫描提供已发布 TCP 候选。扫描失败时仍可通过 `host_port` 提交固定目标。
+
 侧栏「容器管理」下的「编排项目」和「镜像管理」分别使用 /projects 和 /images。/projects?new=1 仍直达新建表单。导出使用同源附件下载；导入直接发送 ZIP 文件，收到项目保存结果后跟踪后台部署。
 
 容器项目信息包含服务端提供的 `directory`。「更多操作 → 项目目录」将这个实际路径作为 `/server/files` 的 `path` 查询参数传给文件管理，兼容目录仍以 ID 命名的项目。首次读取失败时重试同一路径，省略参数时从根目录打开。用 `projects.status` 读取容器状态并用同一结果渲染项目状态和展开内容。单容器日志用 `projects.containerLogs` 请求容器 `ID` 对应的记录，项目汇总日志使用 `projects.logs`。

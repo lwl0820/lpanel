@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, shallowReactive, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, shallowReactive, useTemplateRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type ButtonInstance, type FormInstance, type FormRules } from 'element-plus'
 import { projects, type ContainerAction, type Project, type ProjectContainer, type ProjectPort, type ProjectSaveResult } from '../projects-api'
@@ -144,7 +144,8 @@ const editor = ref(false)
 const editorLoading = ref(false)
 const editorError = ref('')
 const selected = ref<Project | null>(null)
-const form = reactive({ name: '', compose: '', environment: '' })
+let portRowId = 0
+const form = reactive({ name: '', compose: '', environment: '', customPorts: [] as { id: number; value: string }[] })
 const formRef = ref<FormInstance>()
 const restoreFromDirectory = computed(() => !selected.value && !form.compose.trim())
 const projectInput = computed(() => ({
@@ -176,33 +177,75 @@ const rules: FormRules = {
     },
   }],
 }
+const customPortRules = [{
+  trigger: 'blur',
+  validator: (_rule: unknown, value: string, done: (error?: Error) => void) => {
+    const port = Number(value)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return done(new Error('请输入 1 至 65535 的整数'))
+    done()
+  },
+}]
+async function addCustomPort() {
+  const id = ++portRowId
+  form.customPorts.push({ id, value: '' })
+  await nextTick()
+  document.getElementById(`project-custom-port-${id}`)?.focus()
+}
 const ports = ref<ProjectPort[]>([])
 const scanned = ref(false)
 const scanning = ref(false)
 const saving = ref(false)
+let editorVersion = 0
+const currentEditor = (version: number) => editor.value && editorVersion === version
 async function edit(item?: Project) {
+  const version = ++editorVersion
   selected.value = item ?? null; editorError.value = ''; ports.value = []; scanned.value = false
-  Object.assign(form, { name: '', compose: '', environment: '' }); formRef.value?.clearValidate()
+  editorLoading.value = !!item
+  scanning.value = false
+  Object.assign(form, { name: '', compose: '', environment: '', customPorts: [] }); formRef.value?.clearValidate()
   editor.value = true
   if (!item) return
-  editorLoading.value = true
-  try { const data = await projects.get(item.id); Object.assign(form, { name: data.name, compose: data.compose ?? '', environment: data.environment ?? '' }) } catch (e) { editorError.value = errorText(e, '读取项目失败') } finally { editorLoading.value = false }
+  try {
+    const data = await projects.get(item.id)
+    if (!currentEditor(version)) return
+    Object.assign(form, {
+      name: data.name,
+      compose: data.compose ?? '',
+      environment: data.environment ?? '',
+      customPorts: (data.custom_ports ?? []).map(port => ({ id: ++portRowId, value: String(port) })),
+    })
+  } catch (e) {
+    if (currentEditor(version)) editorError.value = errorText(e, '读取项目失败')
+  } finally {
+    if (currentEditor(version)) editorLoading.value = false
+  }
 }
 async function scan() {
+  const version = editorVersion
   const fields = restoreFromDirectory.value || form.name ? ['name', 'compose'] : ['compose']
   if (scanning.value || !(await formRef.value?.validateField(fields).catch(() => false))) return
   scanning.value = true; editorError.value = ''
   ports.value = []; scanned.value = false
-  try { ports.value = await projects.scan({ ...projectInput.value, id: selected.value?.id }); scanned.value = true } catch (e) { editorError.value = errorText(e, '扫描端口失败') } finally { scanning.value = false }
+  try {
+    const result = await projects.scan({ ...projectInput.value, id: selected.value?.id })
+    if (!currentEditor(version)) return
+    ports.value = result
+    scanned.value = true
+  } catch (e) {
+    if (currentEditor(version)) editorError.value = errorText(e, '扫描端口失败')
+  } finally {
+    if (currentEditor(version)) scanning.value = false
+  }
 }
 const hostPort = (p: ProjectPort) => p.source === 'expose' ? '未发布（仅内部访问）' : p.published && p.published !== '0' ? `${p.host_ip ? p.host_ip + ':' : ''}${p.published}` : '部署后自动分配'
 async function save() {
-  if (!(await formRef.value?.validate().catch(() => false)) || saving.value) return
+  if (editorLoading.value || !(await formRef.value?.validate().catch(() => false)) || saving.value) return
   saving.value = true; editorError.value = ''
   try {
+    const input = { ...projectInput.value, custom_ports: [...new Set(form.customPorts.map(port => Number(port.value)))] }
     const result = selected.value
-      ? await projects.update(selected.value.id, projectInput.value)
-      : await projects.create(projectInput.value)
+      ? await projects.update(selected.value.id, input)
+      : await projects.create(input)
     editor.value = false
     await showDeployment(result)
   } catch (e) {
@@ -424,14 +467,27 @@ watch(() => route.query.new, (value) => {
           <span v-if="!selected" id="project-compose-help" class="muted">要从已有目录恢复项目，请填写目录名并留空此处。系统会读取其中的 compose.yaml 和 .env。</span>
         </el-form-item>
         <el-form-item label="环境变量 .env（可选）"><el-input v-model="form.environment" :disabled="restoreFromDirectory" type="textarea" :rows="4" spellcheck="false" placeholder="每行填写 KEY=VALUE"/></el-form-item>
+        <section class="block">
+          <div class="block-h">
+            <h3>服务端口</h3>
+            <div class="inline">
+              <el-button size="small" :loading="scanning" :disabled="editorLoading" @click="scan"><AppIcon v-if="!scanning" name="refresh"/>扫描端口</el-button>
+              <el-button size="small" :disabled="editorLoading" @click="addCustomPort"><AppIcon name="plus"/>添加端口</el-button>
+            </div>
+          </div>
+          <div class="ports">
+            <table v-if="ports.length"><thead><tr><th>服务</th><th>容器端口</th><th>宿主机</th><th>来源</th></tr></thead><tbody><tr v-for="(p, index) in ports" :key="index"><td>{{ p.service }}</td><td class="mono">{{ p.container_port }}/{{ p.protocol }}</td><td :class="p.source === 'expose' ? 'muted' : 'mono'">{{ hostPort(p) }}</td><td><span class="tag">{{ p.source }}</span></td></tr></tbody></table>
+            <div v-else class="ports-empty">{{ scanned ? 'Compose 配置中没有声明端口。' : '从 Compose 配置中识别可绑定域名的端口。' }}</div>
+          </div>
+          <p id="project-custom-port-help" class="hint">自定义端口保存后可用于绑定域名。服务需能通过本机地址 127.0.0.1 访问。</p>
+          <el-form-item v-for="(port, index) in form.customPorts" :key="port.id" :for="`project-custom-port-${port.id}`" label="自定义端口" :prop="`customPorts.${index}.value`" :rules="customPortRules">
+            <div class="inline">
+              <el-input :id="`project-custom-port-${port.id}`" v-model="port.value" name="custom_ports" type="number" min="1" max="65535" step="1" inputmode="numeric" required aria-describedby="project-custom-port-help" placeholder="例如 8080"/>
+              <el-button :aria-label="`移除自定义端口 ${port.value || index + 1}`" @click="form.customPorts.splice(index, 1)">移除</el-button>
+            </div>
+          </el-form-item>
+        </section>
       </el-form>
-      <section class="block">
-        <div class="block-h"><h3>服务端口</h3><el-button size="small" :loading="scanning" :disabled="editorLoading" @click="scan"><AppIcon v-if="!scanning" name="refresh"/>扫描端口</el-button></div>
-        <div class="ports">
-          <table v-if="ports.length"><thead><tr><th>服务</th><th>容器端口</th><th>宿主机</th><th>来源</th></tr></thead><tbody><tr v-for="(p, index) in ports" :key="index"><td>{{ p.service }}</td><td class="mono">{{ p.container_port }}/{{ p.protocol }}</td><td :class="p.source === 'expose' ? 'muted' : 'mono'">{{ hostPort(p) }}</td><td><span class="tag">{{ p.source }}</span></td></tr></tbody></table>
-          <div v-else class="ports-empty">{{ scanned ? 'Compose 配置中没有声明端口。' : '从 Compose 配置中识别可绑定域名的端口。' }}</div>
-        </div>
-      </section>
     </div>
     <template #footer><el-button @click="editor = false">取消</el-button><el-button type="primary" :loading="saving" :disabled="editorLoading" @click="save">{{ selected ? '保存配置' : '创建' }}</el-button></template>
   </el-drawer>
