@@ -671,3 +671,30 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 24: 绑定域名时自动发现编排项目的运行端口
+<!-- trellis-session: v=2 fp=2a74e998344caf74 -->
+
+**Date**: 2026-11-25
+**Task**: 绑定域名时自动发现编排项目的运行端口
+**Branch**: `main`
+
+### Summary
+
+域名绑定弹窗读取 Docker 实际发布映射和项目所属 host 容器进程的 TCP 监听，继续支持手动端口。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `528f54e` | feat: 绑定域名时自动发现编排项目的运行端口 |
+
+### Testing
+
+- [OK] 隔离虚拟机验证两个项目的端口归属、子进程监听、Nginx 实际访问及动态端口重部署。
+- [OK] 项目与绑定 Go 回归测试、go vet、前端类型检查、ESLint、生产构建及 Chrome 交互验收通过。
+
+### Status
+
+[OK] **Completed**
