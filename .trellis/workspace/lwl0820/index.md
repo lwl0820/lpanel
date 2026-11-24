@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 25
+- **Total Sessions**: 26
 - **Last Active**: 2026-11-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~726 | Active |
+| `journal-1.md` | ~756 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 26 | 2026-11-25 | 编排项目升级镜像 | `7f4c30e` | `codex/compose-upgrade-images` |
 | 25 | 2026-11-25 | 编辑编排域名绑定的端口和上游协议 | `4b19666` | `main` |
 | 24 | 2026-11-25 | 绑定域名时自动发现编排项目的运行端口 | `528f54e` | `main` |
 | 23 | 2026-11-24 | 编排项目绑定域名支持自定义端口 | `3687847` | `main` |

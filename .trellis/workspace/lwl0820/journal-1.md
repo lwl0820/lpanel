@@ -724,3 +724,33 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 26: 编排项目升级镜像
+<!-- trellis-session: v=2 fp=82abfa63354892c8 -->
+
+**Date**: 2026-11-25
+**Task**: 编排项目升级镜像
+**Branch**: `codex/compose-upgrade-images`
+
+### Summary
+
+项目行更多菜单支持强制拉取镜像，更新运行中的服务并同步域名的实际端口。
+
+### Main Changes
+
+- 按项目镜像引用和平台拉取，比较容器镜像 ID 后定向重建。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7f4c30e` | feat: 支持编排项目升级镜像 |
+
+### Testing
+
+- [OK] 定向 Go 回归、前端类型检查及浏览器交互通过。隔离 Docker 与 Nginx 实测同标签更新、停止服务保留、多架构镜像判断及域名刷新重试。
+
+### Status
+
+[OK] **Completed**
