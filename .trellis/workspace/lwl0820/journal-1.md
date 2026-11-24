@@ -644,3 +644,30 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 23: 编排项目绑定域名支持自定义端口
+<!-- trellis-session: v=2 fp=6c2e80e8424aa880 -->
+
+**Date**: 2026-11-24
+**Task**: 编排项目绑定域名支持自定义端口
+**Branch**: `main`
+
+### Summary
+
+自定义宿主机端口随项目保存，可由多个域名复用并随项目压缩包迁移。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3687847` | feat: 支持编排项目使用自定义宿主机端口绑定域名 |
+
+### Testing
+
+- [OK] 在隔离虚拟机运行真实 Docker 和 Nginx，验证 host 网络及动态映射共存、重部署和移除端口后的域名访问。
+- [OK] 项目与绑定 Go 测试、前端类型与构建检查及 Chrome 操作验收通过。
+
+### Status
+
+[OK] **Completed**

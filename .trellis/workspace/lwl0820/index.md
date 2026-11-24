@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 22
+- **Total Sessions**: 23
 - **Last Active**: 2026-11-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~646 | Active |
+| `journal-1.md` | ~673 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 23 | 2026-11-24 | 编排项目绑定域名支持自定义端口 | `3687847` | `main` |
 | 22 | 2026-11-24 | 从编排项目打开项目目录 | `b37c73f` | `codex/open-compose-project-directory` |
 | 21 | 2026-11-23 | 编排项目迁移与容器管理导航 | `5525f6a` | `codex/compose-project-folder` |
 | 20 | 2026-11-23 | 面板自动更新 | `00097a8` | `codex/compose-project-folder` |
