@@ -354,6 +354,12 @@ func (a *App) ApplyNginx(ctx context.Context) error {
 }
 func (a *App) renderNginx(items []Binding, marker string, config Config, challengeHost, clientAddr string) string {
 	var out strings.Builder
+	out.WriteString(`# 本文件由 LPanel 管理
+map $http_upgrade $lpanel_connection_upgrade {
+    default upgrade;
+    "" close;
+}
+`)
 	acme := fmt.Sprintf("location ^~ /.well-known/acme-challenge/ { root %q; default_type text/plain; }\n", filepath.Join(a.Root, "acme-webroot"))
 	proxy := fmt.Sprintf("proxy_pass http://%s; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-LPanel-Proxy 1;", config.Listen)
 	panel := Binding{Kind: "panel", Domain: "_"}
@@ -446,7 +452,17 @@ func (a *App) renderNginx(items []Binding, marker string, config Config, challen
 			}
 			fmt.Fprintf(&out, "root %q; index index.html; location / { try_files $uri $uri/ %s; }\n", b.Directory, fallback)
 		case "project":
-			fmt.Fprintf(&out, "location / { proxy_pass %s; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection \"upgrade\"; proxy_set_header X-Forwarded-Proto $scheme; }\n", b.Upstream)
+			fmt.Fprintf(&out, `location / {
+    proxy_pass %s;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $lpanel_connection_upgrade;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+}
+`, b.Upstream)
 		}
 		out.WriteString("}\n")
 	}
@@ -457,7 +473,7 @@ func (a *App) renderNginx(items []Binding, marker string, config Config, challen
 		}
 		fmt.Fprintf(&out, "server { listen %s; server_name %s; %s location / { return 404; } }\n", listen, name, acme)
 	}
-	return "# 本文件由 LPanel 管理\n" + out.String()
+	return out.String()
 }
 func (a *App) applyNginx(ctx context.Context) error {
 	return a.applyNginxConfig(ctx, a.currentConfig())

@@ -38,11 +38,37 @@ func TestBindingConfigAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := a.SaveBinding(ctx, Binding{Kind: "project", Domain: "other.example.com", Upstream: "http://127.0.0.1:8081"}); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(a.Config.NginxConfigDir, "lpanel.conf")
 	old, _ := os.ReadFile(path)
-	for _, part := range []string{"proxy_pass http://127.0.0.1:8080", "proxy_set_header Upgrade", "/.well-known/acme-challenge/", "listen 8443", "current/web"} {
+	for _, part := range []string{"/.well-known/acme-challenge/", "listen 8443", "current/web"} {
 		if !strings.Contains(string(old), part) {
 			t.Fatalf("缺少配置 %s", part)
+		}
+	}
+	const upgradeMap = "map $http_upgrade $lpanel_connection_upgrade"
+	const header = "# 本文件由 LPanel 管理\n" + upgradeMap + " {\n    default upgrade;\n    \"\" close;\n}\n"
+	if !strings.HasPrefix(string(old), header) || strings.Count(string(old), upgradeMap) != 1 {
+		t.Fatal("配置开头应包含管理标记及唯一的连接升级映射")
+	}
+	for _, upstream := range []string{b.Upstream, "http://127.0.0.1:8081"} {
+		_, projectLocation, found := strings.Cut(string(old), "proxy_pass "+upstream+";")
+		if !found {
+			t.Fatalf("缺少上游 %s 的项目反代配置", upstream)
+		}
+		projectLocation, _, _ = strings.Cut(projectLocation, "}")
+		for _, part := range []string{
+			"proxy_http_version 1.1;",
+			"proxy_set_header Upgrade $http_upgrade;",
+			"proxy_set_header Connection $lpanel_connection_upgrade;",
+			"proxy_set_header X-Real-IP $remote_addr;",
+			"proxy_set_header X-Forwarded-For $remote_addr;",
+		} {
+			if !strings.Contains(projectLocation, part) {
+				t.Fatalf("上游 %s 的项目反代缺少配置 %s", upstream, part)
+			}
 		}
 	}
 	a.Command = func(context.Context, string, ...string) ([]byte, error) {

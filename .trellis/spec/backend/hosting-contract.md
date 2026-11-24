@@ -31,6 +31,8 @@
 
 Binding 包含 id、kind(panel/project/site)、resource_id、domain、upstream、directory、spa、service、container_port、host_port、auto_certificate、certificate_status、certificate_error、expires_at 和实际签发账户 `certificate_account_id`。域名全局唯一。项目绑定记录由 service 和 container_port 标识动态发布的端口，或由 host_port 标识固定的宿主机端口。网站使用 directory/spa，面板使用安装配置端口。
 
+编排项目的代理位置用 `$remote_addr` 覆盖 `X-Real-IP` 和 `X-Forwarded-For`，上游收到的两个头均为单个地址。所有项目共享 HTTP 层的升级映射。请求带非空 `Upgrade` 时保留协议并向上游发送 `Connection: upgrade`，普通请求使用 `Connection: close`。配置首行保留托管标记，供升级和卸载识别。
+
 证书账户从 SQLite 按加入顺序读取，最早的现有账户为默认。无账户时 `default_account_id` 为 `null`。面板提供商标识为 `letsencrypt`、`zerossl` 和 `google`，另支持旧自定义地址对应的兼容值。新账户用独立的 `Root/data/acme-accounts/<ID>`，已迁移旧账户用原 `Root/data/acme`。旧证书原地保留。签发使用所选账户，定时续期按绑定实际账户和域名读取 Certbot 保存的签发配置。
 
 ZeroSSL 和 Google Cloud Public CA 在注册时通过 EAB 绑定账户。ZeroSSL 未提交两项凭据时，在用户同意条款后使用联系邮箱向 `https://api.zerossl.com/acme/eab-credentials-email` 获取凭据。有完整凭据时直接注册。Google Cloud Public CA 要求提交两项凭据，使用正式地址 `https://dv.acme-v02.api.pki.goog/directory`。绑定凭据通过权限为 `0600` 的临时配置交给 Certbot，注册结束后清理。 [Google 凭据获取指南](https://docs.cloud.google.com/certificate-manager/docs/public-ca-tutorial)
