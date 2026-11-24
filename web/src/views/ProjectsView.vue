@@ -312,14 +312,14 @@ watch(() => route.query.new, (value) => {
 <template>
   <PageHeader title="编排项目" description="用 Docker Compose 部署和管理应用。">
     <el-button :disabled="busy || loading" @click="reload"><AppIcon name="refresh"/>刷新</el-button>
-    <el-button :disabled="busy || importing" @click="importError = ''; importOpen = true">导入项目</el-button>
-    <el-button type="primary" :disabled="busy" @click="edit()"><AppIcon name="plus"/>新建项目</el-button>
+    <el-button :disabled="busy || importing" @click="importError = ''; importOpen = true"><AppIcon name="upload"/>导入</el-button>
+    <el-button type="primary" :disabled="busy" @click="edit()"><AppIcon name="plus"/>创建</el-button>
   </PageHeader>
   <iframe ref="exportFrame" name="project-export" title="项目导出" sandbox="allow-same-origin allow-downloads" hidden @load="showExportError"/>
   <OperationBanner :operation="operation" :label="operationLabel" @close="operation = null"/>
   <div class="panel">
     <ListState :loading="loading" :error="loadError" :empty="!items.length" icon="projects" title="还没有编排项目" description="新建项目时粘贴 Compose 配置，面板会自动部署。" @retry="reload">
-      <template #empty-action><el-button type="primary" :disabled="busy" @click="edit()"><AppIcon name="plus"/>新建项目</el-button></template>
+      <template #empty-action><el-button type="primary" :disabled="busy" @click="edit()"><AppIcon name="plus"/>创建</el-button></template>
       <div class="tbl-wrap">
         <table class="rtable project-table">
           <thead><tr><th scope="col">项目</th><th scope="col">运行状态</th><th scope="col">配置更新时间</th><th scope="col"><span class="sr">操作</span></th></tr></thead>
@@ -353,7 +353,7 @@ watch(() => route.query.new, (value) => {
                     </el-button>
                     <el-button size="small" :disabled="busy || !containers.length" @click="action(item, 'restart')"><AppIcon name="restart"/>重启</el-button>
                     <el-button size="small" :disabled="busy" @click="edit(item)"><AppIcon name="edit"/>编辑</el-button>
-                    <el-button tag="a" size="small" :href="projects.exportURL(item.id)" :aria-label="`导出 ${item.name}`" target="project-export">导出</el-button>
+                    <el-button tag="a" size="small" :href="projects.exportURL(item.id)" :aria-label="`导出 ${item.name}`" target="project-export"><AppIcon name="download"/>导出</el-button>
                     <RowMenu :items="menu(item)" :label="item.name" :disabled="busy"/>
                   </span>
                 </td>
