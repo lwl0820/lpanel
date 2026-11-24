@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
-- **Last Active**: 2026-11-23
+- **Total Sessions**: 22
+- **Last Active**: 2026-11-24
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~624 | Active |
+| `journal-1.md` | ~646 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-11-24 | 从编排项目打开项目目录 | `b37c73f` | `codex/open-compose-project-directory` |
 | 21 | 2026-11-23 | 编排项目迁移与容器管理导航 | `5525f6a` | `codex/compose-project-folder` |
 | 20 | 2026-11-23 | 面板自动更新 | `00097a8` | `codex/compose-project-folder` |
 | 19 | 2026-11-23 | Compose 项目目录与旧版本升级 | `990cc9c` | `codex/compose-project-folder` |

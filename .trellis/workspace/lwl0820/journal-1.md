@@ -622,3 +622,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 22: 从编排项目打开项目目录
+<!-- trellis-session: v=2 fp=1a3914f20522c4bf -->
+
+**Date**: 2026-11-24
+**Task**: 从编排项目打开项目目录
+**Branch**: `codex/open-compose-project-directory`
+
+### Summary
+
+在浏览器验收了不同项目的真实目录字段、中文及加号、旧目录失败后重试、返回与侧栏根目录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b37c73f` | feat: 从编排项目直接打开文件管理中的项目目录 |
+
+### Status
+
+[OK] **Completed**
