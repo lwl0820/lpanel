@@ -84,6 +84,9 @@ const menu = (b: Binding): MenuItem[] => [
 // 绑定 / 编辑对话框
 const dialog = ref(false)
 const editing = ref<Binding | null>(null)
+const editingProjectPorts = computed(() => editing.value?.kind === 'project'
+  ? projectList.value.find(project => project.id === editing.value?.resource_id)?.custom_ports
+  : undefined)
 function edit(b?: Binding) { editing.value = b ?? null; dialog.value = true }
 async function done(result: BindResult) {
   if (result.accessURL) accessURL.value = result.accessURL
@@ -124,6 +127,6 @@ async function done(result: BindResult) {
       </div>
     </ListState>
   </div>
-  <BindDomainDialog v-model:open="dialog" :binding="editing" @done="done"/>
+  <BindDomainDialog v-model:open="dialog" :binding="editing" :editing-project-ports="editingProjectPorts" @done="done"/>
   <RequestCertificateDialog v-model:open="certificateDialog" :binding="certificateBinding" @done="certificateDone"/>
 </template>

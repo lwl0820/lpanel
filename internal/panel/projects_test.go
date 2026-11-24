@@ -161,6 +161,87 @@ func TestProjectRuntimePortsAndBinding(t *testing.T) {
 	if b, err := a.binding(t.Context(), created.Binding.ID); err != nil || b.Upstream != created.Binding.Upstream {
 		t.Fatalf("重新部署应保留固定监听上游：%+v %v", b, err)
 	}
+
+	original := created.Binding
+	original.CertificateStatus = "enabled"
+	original.CertificateAccountID = "existing-account"
+	original.ExpiresAt = "2050-01-01T00:00:00Z"
+	if err := a.storeBinding(t.Context(), original); err != nil {
+		t.Fatal(err)
+	}
+	updatePath := path + "/bindings/" + original.ID
+	update := func(scheme, target string) Binding {
+		t.Helper()
+		body := fmt.Sprintf(`{"domain":%q,"scheme":%q,"auto_certificate":true%s}`, original.Domain, scheme, target)
+		w := call(a, "PUT", updatePath, body, cookie)
+		var response struct {
+			Binding   Binding    `json:"binding"`
+			Operation *Operation `json:"operation"`
+			AccessURL string     `json:"access_url"`
+		}
+		if err := jsonv2.Unmarshal(w.Body.Bytes(), &response); err != nil || w.Code != 200 {
+			t.Fatalf("编辑绑定失败：%d %s %v", w.Code, w.Body.String(), err)
+		}
+		b := response.Binding
+		if b.ID != original.ID || b.CertificateStatus != "enabled" || b.CertificateAccountID != original.CertificateAccountID ||
+			b.ExpiresAt != original.ExpiresAt || response.Operation != nil || response.AccessURL != "https://"+original.Domain {
+			t.Fatalf("编辑应保留原绑定和证书：%s", w.Body.String())
+		}
+		return b
+	}
+	b := update("http", "")
+	if b.Upstream != "http://"+listener.Addr().String() || b.Service != "_web" || b.ContainerPort != 0 || b.HostPort != hostPort {
+		t.Fatalf("服务状态不可用时应能只修改协议：%+v", b)
+	}
+	status = `{"Service":"web","State":"running","Publishers":[{"URL":"::","TargetPort":80,"PublishedPort":32345,"Protocol":"tcp"}]}`
+	b = update("https", `,"service":"web","container_port":80`)
+	if b.Upstream != "https://[::1]:32345" || b.Service != "web" || b.ContainerPort != 80 || b.HostPort != 0 {
+		t.Fatalf("应切换到动态发布端口：%+v", b)
+	}
+	status = strings.Replace(status, "32345", "32346", 1)
+	if _, err := a.runProjectAction(t.Context(), p.ID, "deploy", false); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := a.binding(t.Context(), original.ID); err != nil || b.Upstream != "https://[::1]:32346" {
+		t.Fatalf("部署应刷新所选动态端口并保留协议：%+v %v", b, err)
+	}
+	b = update("http", `,"host_port":18080`)
+	if b.Upstream != "http://127.0.0.1:18080" || b.Service != "" || b.ContainerPort != 0 || b.HostPort != 18080 {
+		t.Fatalf("切换到自定义端口时应清除动态目标字段：%+v", b)
+	}
+	configPath := filepath.Join(a.Config.NginxConfigDir, "lpanel.conf")
+	oldConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := call(a, "PUT", updatePath, `{"domain":"runtime.example.com","scheme":"https","service":"web","container_port":90}`, cookie); w.Code != 400 {
+		t.Fatalf("应拒绝已经失效的动态端口：%d %s", w.Code, w.Body.String())
+	}
+	failNextProbe := true
+	a.NginxProbe = func(context.Context, string, string, string) error {
+		if failNextProbe {
+			failNextProbe = false
+			return errors.New("候选配置未生效")
+		}
+		return nil
+	}
+	if w := call(a, "PUT", updatePath, `{"domain":"runtime.example.com","scheme":"https"}`, cookie); w.Code != 400 || !strings.Contains(w.Body.String(), "候选配置未生效") {
+		t.Fatalf("应提示 Nginx 配置失败原因：%d %s", w.Code, w.Body.String())
+	}
+	if saved, err := a.binding(t.Context(), original.ID); err != nil || saved != b {
+		t.Fatalf("失败后应保留原绑定：%+v %v", saved, err)
+	}
+	if config, err := os.ReadFile(configPath); err != nil || !slices.Equal(config, oldConfig) {
+		t.Fatalf("失败后应恢复原 Nginx 配置：%v", err)
+	}
+	other := original
+	other.ID, other.Domain, other.ResourceID = "other-binding", "other.example.com", "other-project"
+	if err := a.storeBinding(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	if w := call(a, "PUT", path+"/bindings/"+other.ID, `{"domain":"other.example.com","scheme":"http"}`, cookie); w.Code != 404 {
+		t.Fatalf("应拒绝编辑其他项目的绑定：%d %s", w.Code, w.Body.String())
+	}
 }
 
 func TestProjectSaveAndSecrets(t *testing.T) {

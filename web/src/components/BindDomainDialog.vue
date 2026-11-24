@@ -12,8 +12,9 @@ export type BindPreset = { id: string; name: string } & (
 )
 export interface BindResult { operation: Operation | null; accessURL: string; domain: string }
 interface PortOption { value: string; label: string; target: ProjectBindingTarget }
-// 新建：preset 为空时先选目标（域名页）；编辑：传 binding，只改域名和自动证书
-const props = defineProps<{ preset?: BindPreset | null; binding?: Binding | null }>()
+const currentPort = 'current'
+// 新建时 preset 为空则先选目标，编辑时用 binding 回显设置
+const props = defineProps<{ preset?: BindPreset | null; binding?: Binding | null; editingProjectPorts?: number[] }>()
 const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ done: [result: BindResult] }>()
 const form = reactive({ target: '', domain: '', port: '', scheme: 'http', auto_certificate: false, accountId: '' })
@@ -28,7 +29,8 @@ const scanError = ref('')
 const saving = ref(false)
 const error = ref('')
 const kind = computed(() => props.binding?.kind ?? form.target.split(':')[0])
-const targetId = computed(() => form.target.split(':')[1] ?? '')
+const editingProject = computed(() => props.binding?.kind === 'project' ? props.binding : null)
+const targetId = computed(() => editingProject.value?.resource_id ?? form.target.split(':')[1] ?? '')
 const portGroups = computed(() => {
   const published: PortOption[] = []
   const listeners: PortOption[] = []
@@ -49,7 +51,7 @@ const portGroups = computed(() => {
       })
     }
   }
-  const customPorts = props.preset?.kind === 'project'
+  const customPorts = editingProject.value ? props.editingProjectPorts : props.preset?.kind === 'project'
     ? props.preset.customPorts
     : projectList.value.find(project => project.id === targetId.value)?.custom_ports
   const custom = (customPorts ?? []).map(port => ({
@@ -76,7 +78,11 @@ const rules: FormRules = {
 watch(open, async (value, _, onCleanup) => {
   if (!value) return
   error.value = ''
-  Object.assign(form, { target: '', domain: props.binding?.domain ?? '', port: '', scheme: 'http', auto_certificate: props.binding?.auto_certificate ?? false, accountId: '' })
+  Object.assign(form, {
+    target: '', domain: props.binding?.domain ?? '',
+    scheme: editingProject.value?.upstream.toLowerCase().startsWith('https://') ? 'https' : 'http',
+    auto_certificate: props.binding?.auto_certificate ?? false, accountId: '',
+  })
   formRef.value?.clearValidate()
   if (props.preset) { form.target = `${props.preset.kind}:${props.preset.id}`; return }
   if (props.binding) return
@@ -93,18 +99,18 @@ watch(open, async (value, _, onCleanup) => {
   } catch (e) { if (active) error.value = errorText(e, '读取项目和网站失败') }
 })
 watch(requestsCertificate, value => { if (!value) form.accountId = '' })
-watch([open, () => form.target], async ([isOpen], _, onCleanup) => {
-  form.port = ''
+watch([open, kind, targetId], async ([isOpen, targetKind, projectId], _, onCleanup) => {
+  form.port = editingProject.value ? currentPort : ''
   runtime.value = undefined
   scanError.value = ''
   scanning.value = false
-  if (!isOpen || kind.value !== 'project' || props.binding) return
+  if (!isOpen || targetKind !== 'project') return
 
   let active = true
   onCleanup(() => { active = false })
   scanning.value = true
   try {
-    const result = await projects.runtimePorts(targetId.value)
+    const result = await projects.runtimePorts(projectId)
     if (active) runtime.value = result
   } catch (e) {
     if (active) scanError.value = errorText(e, '读取服务端口失败')
@@ -121,7 +127,13 @@ async function submit() {
   try {
     let operation: Operation | null = null
     let accessURL = ''
-    if (props.binding) {
+    if (editingProject.value) {
+      const port = selectedPort.value?.target
+      if (form.port !== currentPort && !port) return
+      operation = (await projects.updateBinding(targetId.value, editingProject.value.id, {
+        domain, scheme: form.scheme, ...certOptions, ...port,
+      })).operation
+    } else if (props.binding) {
       const result = await domains.save({ ...props.binding, domain, ...certOptions })
       operation = result.operation
       if (result.binding.kind === 'panel' && operation) accessURL = await panelURL(result.binding.domain)
@@ -154,13 +166,15 @@ async function submit() {
           <el-option-group label="其他"><el-option value="panel" label="本面板"/></el-option-group>
         </el-select>
       </el-form-item>
-      <template v-if="kind === 'project' && !binding">
+      <template v-if="kind === 'project'">
         <el-form-item label="服务端口" prop="port">
-          <el-select v-model="form.port" placeholder="选择服务端口" :disabled="!portGroups.length">
+          <el-select v-model="form.port" placeholder="选择服务端口" :disabled="!editingProject && !portGroups.length">
+            <el-option v-if="editingProject" :value="currentPort" label="保留当前端口"/>
             <el-option-group v-for="group in portGroups" :key="group.label" :label="group.label">
               <el-option v-for="port in group.options" :key="port.value" :value="port.value" :label="port.label"/>
             </el-option-group>
           </el-select>
+          <span v-if="editingProject" class="hint">当前上游 {{ editingProject.upstream }}</span>
           <span v-if="scanning" class="hint" role="status">正在读取运行端口…</span>
         </el-form-item>
         <el-alert v-if="scanError || runtime?.warning" :title="scanError || runtime?.warning" type="warning" :closable="false" show-icon/>

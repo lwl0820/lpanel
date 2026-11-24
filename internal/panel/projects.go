@@ -278,6 +278,7 @@ func (a *App) RegisterProjectRoutes() error {
 	a.Mux.Handle("GET /api/v1/projects/{id}/containers/{containerID}/logs", a.RequireAuth(http.HandlerFunc(a.projectContainerLogs)))
 	a.Mux.Handle("POST /api/v1/projects/{id}/containers/{containerID}/actions/{action}", a.RequireAuth(http.HandlerFunc(a.projectContainerAction)))
 	a.Mux.Handle("POST /api/v1/projects/{id}/bindings", a.RequireAuth(http.HandlerFunc(a.bindProject)))
+	a.Mux.Handle("PUT /api/v1/projects/{id}/bindings/{bindingID}", a.RequireAuth(http.HandlerFunc(a.bindProject)))
 	return nil
 }
 func (a *App) projectDirectory(name string) string {
@@ -1039,7 +1040,11 @@ func (a *App) checkProjectDirectoryForRemoval(dir string) error {
 	return nil
 }
 func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
-	p, err := a.project(r.Context(), r.PathValue("id"))
+	ctx := r.Context()
+	projectID := r.PathValue("id")
+	unlock := a.lockProject(projectID)
+	defer unlock()
+	p, err := a.project(ctx, projectID)
 	if err != nil {
 		WriteError(w, 404, "not_found", "项目不存在")
 		return
@@ -1061,7 +1066,9 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 400, "invalid_target", "请选择 HTTP 或 HTTPS 协议")
 		return
 	}
-	b := Binding{Kind: "project", ResourceID: p.ID, Domain: input.Domain, AutoCertificate: input.AutoCertificate}
+	bindingID := r.PathValue("bindingID")
+	b := Binding{ID: bindingID, Kind: "project", ResourceID: p.ID, Domain: input.Domain, AutoCertificate: input.AutoCertificate}
+	keepTarget := bindingID != "" && input.HostPort == nil && input.ListenTarget == nil && input.Service == "" && input.ContainerPort == 0
 	if input.HostPort != nil && input.ListenTarget != nil ||
 		(input.HostPort != nil || input.ListenTarget != nil) && (input.Service != "" || input.ContainerPort != 0) {
 		WriteError(w, 400, "invalid_target", "请选择一个端口作为绑定目标")
@@ -1073,12 +1080,12 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, 400, "invalid_target", "请选择有效的监听地址和端口")
 			return
 		}
-		items, err := a.ProjectStatus(r.Context(), p)
+		items, err := a.ProjectStatus(ctx, p)
 		if err != nil {
 			WriteError(w, 502, "docker_error", a.redactProjectOutput(p, err.Error()))
 			return
 		}
-		ports, incomplete := a.projectHostPorts(r.Context(), items, target.Service)
+		ports, incomplete := a.projectHostPorts(ctx, items, target.Service)
 		i := slices.IndexFunc(ports, func(port ProjectRuntimePort) bool {
 			return port.HostIP == target.HostIP && port.HostPort == target.HostPort
 		})
@@ -1100,12 +1107,12 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 		}
 		b.HostPort = *input.HostPort
 		b.Upstream = fmt.Sprintf("%s://127.0.0.1:%d", input.Scheme, b.HostPort)
-	default:
+	case !keepTarget:
 		if !projectServiceName.MatchString(input.Service) || input.ContainerPort < 1 || input.ContainerPort > 65535 {
 			WriteError(w, 400, "invalid_target", "请选择有效服务和端口")
 			return
 		}
-		items, err := a.ProjectStatus(r.Context(), p)
+		items, err := a.ProjectStatus(ctx, p)
 		if err != nil {
 			WriteError(w, 502, "docker_error", err.Error())
 			return
@@ -1118,7 +1125,28 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 		b.Service = input.Service
 		b.ContainerPort = input.ContainerPort
 	}
-	b, err = a.SaveBindingWithAccount(r.Context(), b, input.ACMEAccountID)
+	a.domainsMu.Lock()
+	defer a.domainsMu.Unlock()
+	if bindingID != "" {
+		old, err := a.binding(ctx, bindingID)
+		if err != nil || old.Kind != "project" || old.ResourceID != p.ID {
+			WriteError(w, 404, "not_found", "此项目中没有该域名绑定")
+			return
+		}
+		if keepTarget {
+			upstream, err := url.Parse(old.Upstream)
+			if err != nil {
+				WriteError(w, 400, "invalid_target", "当前上游地址无效，请重新选择端口")
+				return
+			}
+			upstream.Scheme = input.Scheme
+			b.Upstream = upstream.String()
+			b.Service = old.Service
+			b.ContainerPort = old.ContainerPort
+			b.HostPort = old.HostPort
+		}
+	}
+	b, err = a.saveBindingLocked(ctx, b, input.ACMEAccountID)
 	if err != nil {
 		WriteError(w, 400, "binding_error", err.Error())
 		return
@@ -1135,5 +1163,5 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 		}
 		operation = &op
 	}
-	WriteJSON(w, 200, map[string]any{"binding": b, "operation": operation})
+	WriteJSON(w, 200, map[string]any{"binding": b, "operation": operation, "access_url": a.BindingURL(b)})
 }

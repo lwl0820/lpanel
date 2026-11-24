@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"复用三类端口的解析、证书和 Nginx 回滚约定"}
+{"file":".trellis/spec/frontend/api-contract.md","reason":"沿用编排域名表单、候选和证书账户接口"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"遵循编辑回显、提交及错误提示约定"}
