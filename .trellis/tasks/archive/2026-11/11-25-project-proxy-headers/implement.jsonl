@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/hosting-contract.md", "reason": "域名绑定和 Nginx 配置生效约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "定向测试和真实 Nginx 验证"}

@@ -754,3 +754,29 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 27: 补全编排项目反代请求头
+<!-- trellis-session: v=2 fp=0d737d4ef7020b40 -->
+
+**Date**: 2026-11-25
+**Task**: 补全编排项目反代请求头
+**Branch**: `main`
+
+### Summary
+
+编排项目向上游传递一致的单值客户端地址，普通 HTTP 和 WebSocket 共用项目入口。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0e4983e` | fix: 补全编排项目反代的来源和连接头 |
+
+### Testing
+
+- [OK] 定向 Go 测试和 vet 通过。真实 Nginx 1.24 在两个域名上通过配置检查、来源地址覆盖与 WebSocket 101 握手验证。
+
+### Status
+
+[OK] **Completed**
