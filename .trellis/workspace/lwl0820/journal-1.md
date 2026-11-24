@@ -698,3 +698,29 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 25: 编辑编排域名绑定的端口和上游协议
+<!-- trellis-session: v=2 fp=e750135ab4038bbe -->
+
+**Date**: 2026-11-25
+**Task**: 编辑编排域名绑定的端口和上游协议
+**Branch**: `main`
+
+### Summary
+
+域名与证书页支持原地编辑编排项目的上游协议和端口，保留同域名证书。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4b19666` | feat: 支持编辑编排域名绑定的端口和上游协议 |
+
+### Testing
+
+- [OK] 定向 Go 测试、前端检查和 Chrome 编辑流程通过。隔离 Docker 和 Nginx 验证了原域名 HTTPS 访问、端口切换、动态映射刷新与失败回滚。
+
+### Status
+
+[OK] **Completed**
