@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/server-files.md", "reason": "沿用管理员文件接口和代理契约"}
+{"file": ".trellis/spec/frontend/api-contract.md", "reason": "对齐请求、错误与状态"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "复用列表、表单和反馈"}

@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "11-25-server-files-batch-upload"
+  ],
   "parent": "11-22-server-management",
   "relatedFiles": [],
   "notes": "",

@@ -802,3 +802,30 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 29: 文件管理批量操作与分片上传
+<!-- trellis-session: v=2 fp=2885dabd8ab1ddf5 -->
+
+**Date**: 2026-11-25
+**Task**: 文件管理批量操作与分片上传
+**Branch**: `main`
+
+### Summary
+
+支持批量文件操作、权限和属主修改，点选、拖入及本机粘贴文件均支持分片和进度。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3003a65` | feat: 增强文件批量操作和分片上传 |
+
+### Testing
+
+- [OK] 通过文件管理 Go 回归、go vet、前端相关测试、类型检查、ESLint 与生产构建。
+- [OK] 验证真实 Dolphin 到 Chrome 的粘贴、1 MiB 代理限制下的分片上传与摘要、跨盘元数据保留及 root 更改属主。
+
+### Status
+
+[OK] **Completed**
