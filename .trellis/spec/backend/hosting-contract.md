@@ -22,6 +22,7 @@
 - `GET /api/v1/projects/{id}/runtime-ports` 返回 `ports`、`running` 及可选的 `warning`。已发布 TCP 候选按服务名与容器端口表示，使用当前实际的宿主机端点。host 候选按服务名及监听地址、端口表示，只纳入当前项目容器进程持有的 TCP 监听套接字。某个服务的监听信息读取失败时，结果中保留已发现的可用端口。
 - `POST /api/v1/projects/{id}/bindings` 选择已发布端口时传 `service` 和 `container_port`，部署、启动或重启后按 Docker 当前的发布映射刷新上游。选择已保存的自定义端口时传 `host_port`，上游固定为所选 HTTP/HTTPS 协议下的 `127.0.0.1:<端口>`。选择 host 网络监听时传 `listen_target` 对象，包含 `service`、`host_ip`、`host_port`。保存前重新核对该服务当前监听的端点，绑定记录保存服务名、宿主机端口及固定上游地址。混用目标、提交过期监听或提交未列入该项目候选的手动端口时返回 400。移除候选后，现有绑定继续使用已保存的上游。
 - `PUT /api/v1/projects/{id}/bindings/{bindingID}` 原地更新该项目的现有绑定。传入域名、`scheme` 和证书设置；省略目标字段时按库内当前上游保留主机、端口和目标类型，新选目标使用创建接口的三类字段与校验。切换到固定目标后保留固定上游，切换到发布映射后按服务名和容器端口跟随重部署。域名不变且证书已启用时，沿用签发账户和到期时间。代理配置应用失败时恢复之前的绑定与配置。
+- 项目的绑定创建和更新接口、程序的 `POST /api/v1/bindings` 接收可选布尔字段 `http2`，保存到绑定 JSON。新绑定和历史记录缺少字段时默认开启，更新省略时保留原值，传 `false` 明确关闭。带管理员会话的 `GET /api/v1/bindings/http2` 返回 `{"mode":"per_domain"}`、`{"mode":"shared"}` 或 `{"mode":"unavailable"}`。
 - `POST /api/v1/projects/{id}/actions/upgrade-images` 返回 `202` 和 `project_upgrade-images` 后台操作。按当前 Compose 配置的镜像引用与平台向仓库拉取，所有拉取成功后才更新使用旧镜像的运行中服务。已停止或尚未启动的服务只拉取镜像。升级完成时，按运行中服务的实际发布端口校正动态域名上游。若上次重建成功但绑定刷新失败，重试可在保留新容器的情况下恢复转发。
 - `POST /api/v1/projects/{id}/actions/delete` 返回 `202` 和后台操作。带 `?remove_files=true` 时同时清理该项目的目录，省略该参数时只移除目录根部的 `compose.yaml` 和 `.env`。
 - `POST /api/v1/sites` 接收 `hostnames` 字符串数组、`identifier`、`note`、`directory`、`spa` 和可选的 `auto_certificate`、`acme_account_id`。成功返回 `201`、顶层网站字段、`bindings` 数组及可选的 `operation` 或 `certificate_error`。`PUT /api/v1/sites/{id}` 保存 `identifier`、`note`、`directory` 和 `spa`。单独绑定域名与手动申请入口继续接受可选 `acme_account_id`。
@@ -59,6 +60,8 @@ Compose config 输出的 published 是字符串，可能缺失或为动态端口
 
 Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /.lpanel/config 返回本次标识。重载后用候选 HTTP/HTTPS 地址、Host/SNI 从本机回读匹配才提交；NginxProbe 是测试可替换的实际运行边界。仅本机探针接受测试 CA，不影响用户访问的证书验证；公开验证文件为 Root/acme-webroot/.well-known/acme-challenge，私钥为 Root/data/acme。申请和续期必须使用同一组 config/work/log 目录。Certbot 仅申请和续期，不自动改写站点。
 
+仅为已启用证书的项目和程序绑定生成 HTTP/2 配置。`nginx -V` 确认带 `--with-http_v2_module` 时，1.25.1 及以上按偏好在 `server` 块写入 `http2 on;` 或 `http2 off;`。旧版使用 `listen … ssl http2`，同一监听地址和端口共享 HTTP/2，已保存的单域名偏好留待新版生效。HTTP/2 作用于客户端到 Nginx 的连接，上游按 `proxy_http_version 1.1` 转发并保留 WebSocket 升级。
+
 发布标签为 vX.Y.Z，附件 lpanel_vX.Y.Z_linux_ARCH.tar.gz 及同名 .sha256。包内平铺 lpanel、web、deploy。程序和前端一起切换 current；data 不随发行包覆盖。公开发布源保存在 upgrade_settings，初始值来自 Config.ReleaseRepository。
 
 面板服务启动时检查版本，此后每 24 小时检查一次。自动更新设置持久保存，新旧安装均默认关闭。只有后台检查成功并发现可用发行包且开关已开启时，才自动发起现有升级流程。切换设置与手动检查均不触发安装。
@@ -91,6 +94,7 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 | 建站的 HTTP 绑定已生效，证书任务无法排入 | 返回 `201`、网站和绑定，并带 `certificate_error`，可从域名管理重试 |
 | 通配符绑定申请证书 | 拒绝申请，继续提供 HTTP |
 | Nginx 检查或生效失败 | nginx -t/reload 返回 0 也须回读标识；失败以独立超时上下文恢复原文件、重载及绑定状态，不能误报证书已启用 |
+| HTTP/2 模块或版本无法确认 | 能力接口返回 `unavailable`，仍按原有配置提供 HTTPS |
 | 首次签发失败 | 失败原因可见，保留 HTTP；续期失败则保留已有 HTTPS |
 | 注册前未同意绑定所需条款、提交不完整的绑定凭据，或 ZeroSSL 自动注册缺少邮箱 | 返回 `400`，提示补全后再提交 |
 | 已保存的新账户未能获取绑定凭据或完成注册 | 返回 `201` 和 `needs_eab: true`，通过 PUT 在同一账户上重试 |
@@ -116,6 +120,8 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 账户：无证书账户可删除。删除默认账户后选最早添加的剩余账户，删空后等待下一次添加。手动改选账户签发成功后，当前证书切换到新账户；失败时继续使用原证书。
 失败：无效 Nginx 配置回退旧文件；网站保存/删除失败恢复旧记录；删除网站不删除内容目录。
 
+已有 HTTPS 反代绑定运行 `setup-nginx` 即可启用 HTTP/2。支持逐域名设置的 Nginx 上关闭一个域名后，该域名使用 HTTP/1.1，共用端口的其他已开启域名继续协商 HTTP/2。
+
 删除项目沿用 `down --remove-orphans`，保留命名卷。勾选删除文件时，先确认目录边界，然后移除 Docker 资源和绑定，最后清理目录与项目记录。
 卸载：默认路径可在保留业务容器的情况下停用面板。清理选项在最终确认前列出项目和目录，重复执行已完成的卸载时提示无需操作。
 
@@ -123,6 +129,8 @@ Nginx 文件为配置目录下 lpanel.conf；每次配置的面板精确路径 /
 
 项目测试覆盖短/长端口、变量、expose、JSONL、实际端口更新和保留卷；LPANEL_DOCKER_INTEGRATION=1 开启真实 Docker 测试。域名测试覆盖配置标识匹配、重载 0 但配置未生效、探针超时、原 HTTP/HTTPS 保留、Host/SNI 和 CLI Open 不打断服务任务；网站测试覆盖目录/绑定同步、失败恢复和内容保留。升级测试覆盖语义版本、附件、校验下载、成功/失败回退及鉴权。tests/install-smoke.sh 在一次性 Debian 容器中验证安装分支，系统服务和包管理使用替身，不能等同真实服务器验收。
 项目测试验证新建和更新均返回可查询的部署操作，部署使用刚保存的配置，校验失败不启动部署。
+
+HTTP/2 验证能力结果、旧版和新版指令、关闭值的保存与回读，以及明文连接和其他绑定类型。真实 Nginx 验收应确认 TLS 协商结果并验证上游实际收到 HTTP/1.1、WebSocket 握手 `101`、HTTP 跳转和 ACME 验证路径。
 
 编排镜像升级须覆盖再次拉取同一标签、仓库拉取失败、已拉取新镜像但容器仍运行旧镜像，以及同项目内运行和停止服务并存。断言重建的服务名、未变化服务的容器 ID 和绑定后的实际端口。使用 containerd 镜像存储和多架构索引时，拉取遵守目标平台，比较容器的 `.Image` 和镜像引用未经平台筛选的 `.Id`。目标列表为空时，直接完成操作；没有服务参数的 Compose 启动命令会作用于整个项目。
 

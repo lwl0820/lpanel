@@ -2,7 +2,7 @@
 import { computed, reactive, ref, useId, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import type { Operation } from '../api'
-import { domains, isWildcardHostname, panelLoginURL, type Binding } from '../domain-api'
+import { domains, isWildcardHostname, panelLoginURL, type Binding, type HTTP2Mode } from '../domain-api'
 import { projects, type Project, type ProjectBindingTarget, type ProjectRuntimePorts } from '../projects-api'
 import { programs, type Program, type ProgramRuntime } from '../programs-api'
 import { sites, type Site } from '../sites-api'
@@ -18,7 +18,7 @@ const currentPort = 'current'
 const props = defineProps<{ preset?: BindPreset | null; binding?: Binding | null; editingProjectPorts?: number[] }>()
 const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ done: [result: BindResult] }>()
-const form = reactive({ target: '', domain: '', port: '', scheme: 'http', auto_certificate: false, accountId: '' })
+const form = reactive({ target: '', domain: '', port: '', scheme: 'http', http2: true, auto_certificate: false, accountId: '' })
 const formId = useId()
 const domainHintId = useId()
 const portHintId = useId()
@@ -28,11 +28,14 @@ const siteList = ref<Site[]>([])
 const programList = ref<Program[]>([])
 const runtime = ref<ProjectRuntimePorts>()
 const programRuntime = ref<ProgramRuntime>()
+const http2Mode = ref<HTTP2Mode | null>()
 const scanning = ref(false)
 const scanError = ref('')
 const saving = ref(false)
 const error = ref('')
 const kind = computed(() => props.binding?.kind ?? form.target.split(':')[0])
+const isProxy = computed(() => kind.value === 'project' || kind.value === 'program')
+const canToggleHTTP2 = computed(() => http2Mode.value === 'per_domain' && !saving.value)
 const editingProject = computed(() => props.binding?.kind === 'project' ? props.binding : null)
 const editingProgram = computed(() => props.binding?.kind === 'program' ? props.binding : null)
 const editingProxy = computed(() => editingProject.value ?? editingProgram.value)
@@ -90,6 +93,7 @@ watch(open, async (value, _, onCleanup) => {
   Object.assign(form, {
     target: '', domain: props.binding?.domain ?? '',
     scheme: editingProxy.value?.upstream.toLowerCase().startsWith('https://') ? 'https' : 'http',
+    http2: props.binding?.http2 ?? true,
     auto_certificate: props.binding?.auto_certificate ?? false, accountId: '',
   })
   formRef.value?.clearValidate()
@@ -110,6 +114,18 @@ watch(open, async (value, _, onCleanup) => {
       : siteList.value[0] ? `site:${siteList.value[0].id}`
         : programList.value[0] ? `program:${programList.value[0].id}` : 'panel'
   } catch (e) { if (active) error.value = errorText(e, '读取域名指向列表失败') }
+})
+watch([open, isProxy], async ([isOpen, proxy], _, onCleanup) => {
+  http2Mode.value = undefined
+  if (!isOpen || !proxy) return
+  let active = true
+  onCleanup(() => { active = false })
+  try {
+    const { mode } = await domains.http2()
+    if (active) http2Mode.value = mode
+  } catch {
+    if (active) http2Mode.value = null
+  }
 })
 watch(requestsCertificate, value => { if (!value) form.accountId = '' })
 watch([open, kind, targetId], async ([isOpen, targetKind, id], _, onCleanup) => {
@@ -145,10 +161,15 @@ watch([open, kind, targetId], async ([isOpen, targetKind, id], _, onCleanup) => 
   }
 })
 async function panelURL(domain: string) { try { return panelLoginURL(await domains.access(), domain, true) } catch { return '' } }
+function toggleHTTP2WithSpace(repeat: boolean) {
+  // 开关组件取消原生点击时，浏览器可能还原复选框的键盘状态。
+  if (canToggleHTTP2.value && !repeat) form.http2 = !form.http2
+}
 async function submit() {
   if (saving.value || (requestsCertificate.value && !form.accountId) || !await formRef.value?.validate().catch(() => false)) return
   saving.value = true; error.value = ''
   const domain = form.domain.trim()
+  const http2 = http2Mode.value === 'per_domain' ? form.http2 : undefined
   const certOptions = { auto_certificate: !wildcardSite.value && form.auto_certificate, acme_account_id: requestsCertificate.value ? form.accountId : undefined }
   try {
     let operation: Operation | null = null
@@ -157,7 +178,7 @@ async function submit() {
       const port = selectedPort.value?.target
       if (form.port !== currentPort && !port) return
       operation = (await projects.updateBinding(targetId.value, editingProject.value.id, {
-        domain, scheme: form.scheme, ...certOptions, ...port,
+        domain, scheme: form.scheme, http2, ...certOptions, ...port,
       })).operation
     } else if (kind.value === 'program') {
       const port = form.port === currentPort
@@ -166,7 +187,7 @@ async function submit() {
       if (!port) return
       const result = await domains.save({
         kind: 'program', id: editingProgram.value?.id, resource_id: targetId.value,
-        domain, upstream: `${form.scheme}://${port}`, ...certOptions,
+        domain, upstream: `${form.scheme}://${port}`, http2, ...certOptions,
       })
       operation = result.operation
     } else if (props.binding) {
@@ -175,7 +196,7 @@ async function submit() {
       if (result.binding.kind === 'panel' && operation) accessURL = await panelURL(result.binding.domain)
     } else if (kind.value === 'project') {
       if (!selectedPort.value) return
-      operation = (await projects.bind(targetId.value, { domain, ...selectedPort.value.target, scheme: form.scheme, ...certOptions })).operation
+      operation = (await projects.bind(targetId.value, { domain, ...selectedPort.value.target, scheme: form.scheme, http2, ...certOptions })).operation
     } else if (kind.value === 'site') {
       operation = (await sites.bind(targetId.value, { domain, ...certOptions })).operation
     } else {
@@ -233,7 +254,16 @@ async function submit() {
           </div>
         </el-form-item>
       </template>
-      <el-form-item v-if="kind === 'project' || kind === 'program'" label="上游协议"><el-radio-group v-model="form.scheme"><el-radio-button value="http">HTTP</el-radio-button><el-radio-button value="https">HTTPS</el-radio-button></el-radio-group></el-form-item>
+      <el-form-item v-if="isProxy" label="上游协议"><el-radio-group v-model="form.scheme"><el-radio-button value="http">HTTP</el-radio-button><el-radio-button value="https">HTTPS</el-radio-button></el-radio-group></el-form-item>
+      <el-form-item v-if="isProxy" label="HTTP/2">
+        <el-switch :model-value="http2Mode === 'shared' || (http2Mode === 'per_domain' && form.http2)"
+          :disabled="!canToggleHTTP2" :loading="http2Mode === undefined"
+          @update:model-value="form.http2 = $event === true" @keydown.space.prevent="toggleHTTP2WithSpace($event.repeat)"/>
+        <span v-if="http2Mode === 'shared'" class="hint">HTTPS 启用后生效。升级到 Nginx 1.25.1 或更高版本可单独关闭。</span>
+        <span v-else-if="http2Mode === 'unavailable'" class="hint">当前 Nginx 不支持 HTTP/2。</span>
+        <span v-else-if="http2Mode === null" class="hint">暂时无法检查 HTTP/2 支持情况，可重新打开此窗口再试。</span>
+        <span v-else-if="http2Mode === 'per_domain'" class="hint">HTTPS 启用后生效。</span>
+      </el-form-item>
       <el-checkbox v-if="!wildcardSite" v-model="form.auto_certificate" name="auto_certificate">自动申请 HTTPS 证书</el-checkbox>
       <AcmeAccountSelect v-if="open && requestsCertificate" v-model="form.accountId"/>
       <p v-if="requestsCertificate" class="hint">申请证书需要公网 80 端口可达。</p>

@@ -1,5 +1,6 @@
 import { request, type Operation } from './api'
-export interface Binding { id: string; kind: 'panel'|'project'|'site'|'program'; resource_id: string; domain: string; upstream: string; directory: string; spa: boolean; service: string; container_port: number; host_port?: number; auto_certificate: boolean; certificate_status: string; certificate_error: string; expires_at: string; certificate_account_id?: string }
+export interface Binding { id: string; kind: 'panel'|'project'|'site'|'program'; resource_id: string; domain: string; upstream: string; http2?: boolean; directory: string; spa: boolean; service: string; container_port: number; host_port?: number; auto_certificate: boolean; certificate_status: string; certificate_error: string; expires_at: string; certificate_account_id?: string }
+export type HTTP2Mode = 'per_domain' | 'shared' | 'unavailable'
 export interface Access { panel_port: number; panel_domain: string; https: boolean; login_path: string }
 export interface BindingResult { binding: Binding; operation: Operation|null; access_url: string }
 export const isWildcardHostname = (hostname: string) => hostname.startsWith('*.')
@@ -9,6 +10,7 @@ export function panelLoginURL(access: Access, host = access.panel_domain || wind
 }
 export const domains = {
  list: () => request<Binding[]>('/bindings'),
+ http2: () => request<{ mode: HTTP2Mode }>('/bindings/http2'),
  save: (binding: Partial<Binding> & { acme_account_id?: string }) => request<BindingResult>('/bindings', { method:'POST', body:JSON.stringify(binding) }),
  remove: (id:string) => request<{ok:boolean}>(`/bindings/${id}`, {method:'DELETE'}),
  certificate: (id:string, accountId:string) => request<Operation>(`/bindings/${id}/certificate`, { method:'POST', body:JSON.stringify({ acme_account_id: accountId }) }),

@@ -62,8 +62,18 @@ func TestProjectCustomPortBinding(t *testing.T) {
 		}
 		return result.Binding
 	}
-	fixed := bind(bindPath, `{"domain":"fixed.example.com","host_port":8080,"scheme":"https"}`)
+	fixed := bind(bindPath, `{"domain":"fixed.example.com","host_port":8080,"scheme":"https","http2":false}`)
 	another := bind(bindPath, `{"domain":"another.example.com","host_port":8080,"scheme":"http"}`)
+	if fixed.HTTP2 == nil || *fixed.HTTP2 || another.HTTP2 != nil {
+		t.Fatal("新建域名应区分显式关闭 HTTP/2 和使用默认设置")
+	}
+	edit := call(a, http.MethodPut, bindPath+"/"+another.ID, `{"domain":"another.example.com","scheme":"http","http2":false}`, cookie)
+	if edit.Code != http.StatusOK {
+		t.Fatalf("项目域名编辑失败：%d %s", edit.Code, edit.Body.String())
+	}
+	if saved, err := a.binding(t.Context(), another.ID); err != nil || saved.HTTP2 == nil || *saved.HTTP2 {
+		t.Fatalf("项目编辑应保存 HTTP/2 关闭设置：%+v，%v", saved, err)
+	}
 	if fixed.HostPort != 8080 || fixed.Upstream != "https://127.0.0.1:8080" || another.HostPort != 8080 || another.Upstream != "http://127.0.0.1:8080" {
 		t.Fatalf("两个域名应可共享自定义端口：%+v，%+v", fixed, another)
 	}
@@ -77,12 +87,15 @@ func TestProjectCustomPortBinding(t *testing.T) {
 		t.Fatalf("不应允许使用已移除的候选端口：%d %s", w.Code, w.Body.String())
 	}
 	fixed.Domain = "renamed.example.com"
+	fixed.HTTP2 = nil
 	body, err := json.Marshal(fixed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if edited := bind("/api/v1/bindings", string(body)); edited.HostPort != fixed.HostPort || edited.Upstream != fixed.Upstream || edited.Domain != fixed.Domain {
 		t.Fatalf("编辑域名应保留固定端口：%+v", edited)
+	} else if edited.HTTP2 == nil || *edited.HTTP2 {
+		t.Fatal("编辑时省略 HTTP/2 字段应保留原设置")
 	}
 	published = 18080
 	dynamic := bind(bindPath, `{"domain":"dynamic.example.com","service":"web","container_port":80,"scheme":"http"}`)

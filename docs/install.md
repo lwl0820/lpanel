@@ -107,6 +107,8 @@ sudo systemctl restart lpanel.service
 
 编排项目绑定域名后，应用可通过 `X-Real-IP` 或 `X-Forwarded-For` 读取 Nginx 识别的客户端地址，同一域名也支持 WebSocket。前面有 CDN 或其他代理时，要让应用看到访客地址，需先在 Nginx 中配置可信代理来源。旧版升级后，运行 `sudo /opt/lpanel/current/lpanel setup-nginx --root /opt/lpanel` 可将这些规则应用到已有域名绑定。
 
+编排项目和宿主机程序的域名绑定默认开启 HTTP/2，在 HTTPS 证书启用后生效。Nginx 1.25.1 或更高版本支持在绑定弹窗中为单个域名关闭。较旧且支持 HTTP/2 的 Nginx 会在共享的 HTTPS 端口上启用 HTTP/2。已有绑定可运行上面的 `setup-nginx` 命令应用设置，无需重新申请证书。
+
 未申请证书时，地址为 `http://服务器地址:面板端口`；绑定域名且证书签发成功后，地址为 `https://面板域名:面板端口`。首次签发失败保留 HTTP 并输出服务器 IP 地址入口，脚本显示失败原因，安装结束不声称 HTTPS 已启用；修正网络或解析后可在面板中重试。
 
 安装时用于申请证书的提供商和联系邮箱会保存为默认 ACME 账户。仅安装 HTTP 时，可以登录面板，在「域名与证书」的「ACME 账户管理」添加账户。第一个账户会成为默认账户。

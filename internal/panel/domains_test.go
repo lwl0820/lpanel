@@ -151,6 +151,77 @@ func TestBindingConfigAndRollback(t *testing.T) {
 		t.Fatal("绑定未恢复")
 	}
 }
+func TestNginxHTTP2Config(t *testing.T) {
+	const module = "configure arguments: --with-http_realip_module --with-http_v2_module\n"
+	bindings := []Binding{
+		{Kind: "project", Domain: "app.example.com", Upstream: "http://127.0.0.1:8080", CertificateStatus: "enabled"},
+		{Kind: "program", Domain: "program.example.com", Upstream: "http://127.0.0.1:8081", CertificateStatus: "enabled"},
+		{Kind: "project", Domain: "disabled.example.com", Upstream: "http://127.0.0.1:8082", CertificateStatus: "enabled", HTTP2: new(false)},
+		{Kind: "project", Domain: "plain.example.com", Upstream: "http://127.0.0.1:8083"},
+		{Kind: "site", Domain: "site.example.com", CertificateStatus: "enabled"},
+		{Kind: "panel", Domain: "panel.example.com", CertificateStatus: "enabled"},
+	}
+	for _, tc := range []struct {
+		name   string
+		output string
+		mode   string
+	}{
+		{"旧版监听选项", "nginx version: nginx/1.25.0\n" + module, "shared"},
+		{"新版虚拟主机指令", "nginx version: nginx/1.25.1\n" + module, "per_domain"},
+		{"缺少模块", "nginx version: nginx/1.26.3\nconfigure arguments: --with-http_realip_module\n", "unavailable"},
+		{"未识别版本", module, "unavailable"},
+		{"查询失败", "", "unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := domainApp(t)
+			a.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				if name == "nginx" && len(args) == 1 && args[0] == "-V" {
+					if tc.output == "" {
+						return nil, errors.New("无法查询 Nginx 版本")
+					}
+					return []byte(tc.output), nil
+				}
+				return nil, nil
+			}
+			if err := a.applyNginxBindings(t.Context(), a.currentConfig(), bindings, ""); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(a.Config.NginxConfigDir, "lpanel.conf"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, b := range bindings {
+				listen, body, ok := strings.Cut(string(data), "server_name "+b.Domain+";\n")
+				if !ok {
+					t.Fatalf("缺少域名 %s 的服务配置", b.Domain)
+				}
+				_, listen, _ = strings.CutLast(listen, "server {")
+				firstLine, _, _ := strings.Cut(body, "\n")
+				directive, found := strings.CutPrefix(firstLine, "http2 ")
+				if !found {
+					directive = ""
+				}
+				proxyTLS := b.CertificateStatus == "enabled" && (b.Kind == "project" || b.Kind == "program")
+				wantDirective := ""
+				if proxyTLS && tc.mode == "per_domain" {
+					wantDirective = "on;"
+					if b.Domain == "disabled.example.com" {
+						wantDirective = "off;"
+					}
+				}
+				if directive != wantDirective || strings.Contains(listen, "ssl http2;") != (proxyTLS && tc.mode == "shared") {
+					t.Errorf("%s 的 HTTP/2 配置不正确：%q，%q", b.Domain, listen, firstLine)
+				}
+			}
+			login := call(a, http.MethodPost, "/api/v1/auth/login", `{"username":"管理员","password":"test-password"}`, nil)
+			response := call(a, http.MethodGet, "/api/v1/bindings/http2", "", login.Result().Cookies()[0])
+			if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != fmt.Sprintf(`{"mode":%q}`, tc.mode) {
+				t.Errorf("能力查询返回 %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestCertificateFailureKeepsHTTP(t *testing.T) {
 	a := domainApp(t)
 	ctx := context.Background()

@@ -39,6 +39,7 @@ type Binding struct {
 	Service              string `json:"service"`
 	ContainerPort        int    `json:"container_port"`
 	HostPort             int    `json:"host_port,omitzero"`
+	HTTP2                *bool  `json:"http2,omitempty"`
 	AutoCertificate      bool   `json:"auto_certificate"`
 	CertificateStatus    string `json:"certificate_status"`
 	CertificateAccountID string `json:"certificate_account_id,omitempty"`
@@ -49,6 +50,7 @@ type Binding struct {
 var (
 	ordinaryDomain         = regexp.MustCompile(`^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$`)
 	errWildcardCertificate = errors.New("通配符域名仅支持 HTTP 访问")
+	nginxVersion           = regexp.MustCompile(`^nginx version: nginx/([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)`)
 )
 
 func normalizeBindingDomain(domain, kind string) (string, error) {
@@ -92,6 +94,10 @@ func (a *App) registerDomains() error {
 			return
 		}
 		WriteJSON(w, 200, items)
+	})))
+	a.Mux.Handle("GET /api/v1/bindings/http2", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, mode := a.nginxCapabilities(r.Context())
+		WriteJSON(w, 200, map[string]nginxHTTP2Mode{"mode": mode})
 	})))
 	a.Mux.Handle("POST /api/v1/bindings", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
@@ -256,6 +262,9 @@ func (a *App) saveBindingLocked(ctx context.Context, b Binding, accountID string
 	}
 	if oldErr == nil && (old.Kind == "program" || b.Kind == "program") && (old.Kind != b.Kind || old.ResourceID != b.ResourceID) {
 		return b, errors.New("不能修改该绑定指向的程序")
+	}
+	if oldErr == nil && b.HTTP2 == nil {
+		b.HTTP2 = old.HTTP2
 	}
 	switch b.Kind {
 	case "panel":
@@ -435,7 +444,44 @@ func (a *App) ApplyNginx(ctx context.Context) error {
 
 const programLogStreamLocation = "location ~ ^/api/v1/programs/[^/]+/logs/stream$ {"
 
-func (a *App) renderNginx(items []Binding, marker string, config Config, challengeHost, clientAddr string) string {
+type nginxHTTP2Mode string
+
+const (
+	nginxHTTP2Unavailable nginxHTTP2Mode = "unavailable"
+	nginxHTTP2Shared      nginxHTTP2Mode = "shared"
+	nginxHTTP2PerDomain   nginxHTTP2Mode = "per_domain"
+)
+
+func (a *App) nginxCapabilities(ctx context.Context) (clientAddr string, http2Mode nginxHTTP2Mode) {
+	output, err := a.Command(ctx, "nginx", "-V")
+	if err != nil {
+		return "\"\"", nginxHTTP2Unavailable
+	}
+	versionInfo := string(output)
+	options := strings.Fields(versionInfo)
+	clientAddr = "$remote_addr"
+	if slices.Contains(options, "--with-http_realip_module") {
+		clientAddr = "$realip_remote_addr"
+	}
+	if !slices.Contains(options, "--with-http_v2_module") {
+		return clientAddr, nginxHTTP2Unavailable
+	}
+	match := nginxVersion.FindStringSubmatch(versionInfo)
+	if match == nil {
+		return clientAddr, nginxHTTP2Unavailable
+	}
+	var major, minor, patch int
+	if _, err := fmt.Sscanf(match[1], "%d.%d.%d", &major, &minor, &patch); err != nil {
+		return clientAddr, nginxHTTP2Unavailable
+	}
+	// 从 1.25.1 起可以为每个虚拟主机单独设置 HTTP/2。
+	if major > 1 || major == 1 && (minor > 25 || minor == 25 && patch >= 1) {
+		return clientAddr, nginxHTTP2PerDomain
+	}
+	return clientAddr, nginxHTTP2Shared
+}
+
+func (a *App) renderNginx(items []Binding, marker string, config Config, challengeHost, clientAddr string, http2Mode nginxHTTP2Mode) string {
 	var out strings.Builder
 	out.WriteString(`# 本文件由 LPanel 管理
 map $http_upgrade $lpanel_connection_upgrade {
@@ -483,9 +529,13 @@ map $http_upgrade $lpanel_connection_upgrade {
 		if tls && b.Kind != "panel" {
 			port = 443
 		}
+		proxyHTTP2 := tls && (b.Kind == "project" || b.Kind == "program")
 		fmt.Fprintf(&out, "server { listen %s%d", listenPrefix, port)
 		if tls {
 			out.WriteString(" ssl")
+			if proxyHTTP2 && http2Mode == nginxHTTP2Shared {
+				out.WriteString(" http2")
+			}
 			if b.Kind == "panel" && ip.IsValid() {
 				// 浏览器打开 IP 地址时不会发送域名 SNI。
 				out.WriteString(" default_server")
@@ -496,6 +546,13 @@ map $http_upgrade $lpanel_connection_upgrade {
 			fmt.Fprintf(&out, "listen [::]:%d; ", port)
 		}
 		fmt.Fprintf(&out, "server_name %s;\n", serverName)
+		if proxyHTTP2 && http2Mode == nginxHTTP2PerDomain {
+			if b.HTTP2 == nil || *b.HTTP2 {
+				out.WriteString("http2 on;\n")
+			} else {
+				out.WriteString("http2 off;\n")
+			}
+		}
 		if tls {
 			dir := a.certificateDir(b.CertificateAccountID, b.Domain)
 			fmt.Fprintf(&out, "ssl_certificate %q; ssl_certificate_key %q;\n", filepath.Join(dir, "fullchain.pem"), filepath.Join(dir, "privkey.pem"))
@@ -596,14 +653,8 @@ func (a *App) applyNginxBindings(ctx context.Context, config Config, items []Bin
 			config.HTTPS = b.CertificateStatus == "enabled"
 		}
 	}
-	clientAddr := "\"\""
-	if version, err := a.Command(ctx, "nginx", "-V"); err == nil {
-		clientAddr = "$remote_addr"
-		if slices.Contains(strings.Fields(string(version)), "--with-http_realip_module") {
-			clientAddr = "$realip_remote_addr"
-		}
-	}
-	if err := os.WriteFile(path, []byte(a.renderNginx(items, marker, config, challengeHost, clientAddr)), 0644); err != nil {
+	clientAddr, http2Mode := a.nginxCapabilities(ctx)
+	if err := os.WriteFile(path, []byte(a.renderNginx(items, marker, config, challengeHost, clientAddr, http2Mode)), 0644); err != nil {
 		return err
 	}
 	restore := func() error {

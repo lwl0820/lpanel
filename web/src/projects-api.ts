@@ -11,7 +11,7 @@ export interface ProjectRuntimePorts { ports: ProjectRuntimePort[]; running: boo
 export type ProjectBindingTarget = { host_port: number; service?: never; container_port?: never; listen_target?: never }
   | (Pick<ProjectPort, 'service' | 'container_port'> & { host_port?: never; listen_target?: never })
   | { listen_target: ProjectListenTarget; host_port?: never; service?: never; container_port?: never }
-type ProjectBindingOptions = { domain: string; scheme: string; auto_certificate: boolean; acme_account_id?: string }
+type ProjectBindingOptions = { domain: string; scheme: string; http2?: boolean; auto_certificate: boolean; acme_account_id?: string }
 type ProjectBindingInput = ProjectBindingTarget & ProjectBindingOptions
 type ProjectBindingUpdate = ProjectBindingOptions & (ProjectBindingTarget | {
   host_port?: never; service?: never; container_port?: never; listen_target?: never

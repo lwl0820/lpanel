@@ -1178,6 +1178,7 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 		HostPort        *int                 `json:"host_port"`
 		ListenTarget    *projectListenTarget `json:"listen_target"`
 		Scheme          string               `json:"scheme"`
+		HTTP2           *bool                `json:"http2"`
 		AutoCertificate bool                 `json:"auto_certificate"`
 		ACMEAccountID   string               `json:"acme_account_id"`
 	}
@@ -1189,7 +1190,7 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bindingID := r.PathValue("bindingID")
-	b := Binding{ID: bindingID, Kind: "project", ResourceID: p.ID, Domain: input.Domain, AutoCertificate: input.AutoCertificate}
+	b := Binding{ID: bindingID, Kind: "project", ResourceID: p.ID, Domain: input.Domain, HTTP2: input.HTTP2, AutoCertificate: input.AutoCertificate}
 	keepTarget := bindingID != "" && input.HostPort == nil && input.ListenTarget == nil && input.Service == "" && input.ContainerPort == 0
 	if input.HostPort != nil && input.ListenTarget != nil ||
 		(input.HostPort != nil || input.ListenTarget != nil) && (input.Service != "" || input.ContainerPort != 0) {
