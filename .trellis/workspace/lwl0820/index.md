@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 27
+- **Total Sessions**: 28
 - **Last Active**: 2026-11-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~782 | Active |
+| `journal-1.md` | ~804 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 28 | 2026-11-25 | 宿主机程序管理与 B 版界面验收 | `4f6de5c` | `main` |
 | 27 | 2026-11-25 | 补全编排项目反代请求头 | `0e4983e` | `main` |
 | 26 | 2026-11-25 | 编排项目升级镜像 | `7f4c30e` | `codex/compose-upgrade-images` |
 | 25 | 2026-11-25 | 编辑编排域名绑定的端口和上游协议 | `4b19666` | `main` |

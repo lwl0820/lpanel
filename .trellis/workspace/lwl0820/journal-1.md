@@ -780,3 +780,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 28: 宿主机程序管理与 B 版界面验收
+<!-- trellis-session: v=2 fp=0ec652cb01d8ae45 -->
+
+**Date**: 2026-11-25
+**Task**: 宿主机程序管理与 B 版界面验收
+**Branch**: `main`
+
+### Summary
+
+接入 Supervisor、程序日志和域名绑定，完成桌面与手机界面对照、真实服务联调、LPanel 升级与回退验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4f6de5c` | feat: 支持通过 Supervisor 托管宿主机程序 |
+
+### Status
+
+[OK] **Completed**

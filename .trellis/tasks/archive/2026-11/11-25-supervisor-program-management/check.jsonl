@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/hosting-contract.md", "reason": "核对域名、证书、安装和卸载契约"}
+{"file": ".trellis/spec/backend/server-files.md", "reason": "核对文件传输与目录操作边界"}
+{"file": ".trellis/spec/backend/server-monitor.md", "reason": "核对运行指标和进程采样口径"}
+{"file": ".trellis/spec/frontend/api-contract.md", "reason": "核对会话、错误、绑定和后台操作"}
+{"file": ".trellis/tasks/archive/2026-11/11-25-supervisor-program-management/design.md", "reason": "以用户确认的 B 版交互原型和程序托管设计为实现及验收依据"}
