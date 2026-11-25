@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, shallowRef, useTemplateRef } from 'vue'
+/* global ClipboardEvent, DragEvent, EventTarget, File */
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, useTemplateRef } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, type ButtonInstance } from 'element-plus'
 import { APIError } from '../api'
@@ -18,7 +19,15 @@ const loadError = ref('')
 const saving = ref(false)
 const uploading = ref(false)
 const busy = computed(() => loading.value || saving.value || uploading.value)
+const checkedPaths = ref(new Set<string>())
+const checkedEntries = computed(() => entries.value.filter(entry => checkedPaths.value.has(entry.path)))
+const actionableEntries = computed(() => entries.value.filter(entry => entry.kind !== 'other'))
+const clipboard = shallowRef<{ action: 'copy' | 'move'; entries: ServerFileEntry[] }>()
+const clipboardType = 'application/x-lpanel-server-files'
+let clipboardMarker = ''
+const batchResult = shallowRef<{ action: string; succeeded: number; failures: { path: string; reason: string }[] }>()
 const fileInput = useTemplateRef('fileInput')
+const filePanel = useTemplateRef('filePanel')
 const tableRegion = useTemplateRef('tableRegion')
 const page = ref(1)
 const pageSize = 50
@@ -49,7 +58,15 @@ async function loadDirectory(path = directory.value?.path ?? initialPath) {
     page.value = next.path === directory.value?.path
       ? Math.min(page.value, Math.max(1, Math.ceil(next.entries.length / pageSize)))
       : 1
-    if (next.path !== directory.value?.path) tableRegion.value?.scrollTo(0, 0)
+    if (next.path !== directory.value?.path) {
+      checkedPaths.value.clear()
+      tableRegion.value?.scrollTo(0, 0)
+      if (filePanel.value?.contains(document.activeElement)) {
+        void nextTick(() => filePanel.value?.focus({ preventScroll: true }))
+      }
+    } else {
+      checkedPaths.value = new Set(next.entries.filter(entry => checkedPaths.value.has(entry.path)).map(entry => entry.path))
+    }
     directory.value = next
   } catch (e) {
     loadError.value = errorText(e, '无法打开文件夹')
@@ -57,34 +74,203 @@ async function loadDirectory(path = directory.value?.path ?? initialPath) {
     loading.value = false
   }
 }
-onMounted(() => { void loadDirectory() })
+interface UploadItem {
+  id: number
+  path: string
+  size: number
+  received: number
+  status: 'waiting' | 'uploading' | 'done' | 'failed'
+  error?: string
+}
+const uploadItems = ref<UploadItem[]>([])
+const pendingUploads: { item: UploadItem; file: File; directory: string }[] = []
+let nextUpload = 0
+let leaving = false
 
-async function upload() {
+onMounted(() => {
+  window.addEventListener('paste', pasteFiles)
+  void loadDirectory()
+})
+onUnmounted(() => {
+  window.removeEventListener('paste', pasteFiles)
+  leaving = true
+  pendingUploads.length = 0
+})
+
+function chooseFiles() {
   const input = fileInput.value
   if (!input) return
-  const file = input.files?.[0]
+  const files = Array.from(input.files ?? [])
   input.value = ''
-  if (!file || !directory.value || busy.value) return
-  uploading.value = true
-  try {
-    await serverFiles.upload(childPath(directory.value.path, file.name), file)
-    ElMessage.success('文件已上传')
-    await loadDirectory()
-  } catch (e) {
-    ElMessage.error(e instanceof APIError && e.status === 413 ? '文件太大，无法上传' : errorText(e, '上传失败'))
-  } finally {
-    uploading.value = false
+  enqueueUploads(files)
+}
+
+function allowFileDrop(event: DragEvent) {
+  if (!event.dataTransfer?.types.includes('Files')) return
+  event.preventDefault()
+  event.dataTransfer.dropEffect = directory.value && !loading.value && !saving.value ? 'copy' : 'none'
+}
+
+function dropFiles(event: DragEvent) {
+  const transfer = event.dataTransfer
+  if (!transfer?.types.includes('Files')) return
+  event.preventDefault()
+  const items = Array.from(transfer.items).filter(item => item.kind === 'file')
+  if (items.length === 0) {
+    enqueueUploads(transfer.files)
+    return
+  }
+  const files: File[] = []
+  let hasDirectory = false
+  for (const item of items) {
+    if (item.webkitGetAsEntry?.()?.isDirectory) {
+      hasDirectory = true
+      continue
+    }
+    const file = item.getAsFile()
+    if (file) files.push(file)
+  }
+  if (hasDirectory) ElMessage.warning('暂时只支持上传文件，请打开文件夹后选择里面的文件')
+  enqueueUploads(files)
+}
+
+function isTextField(target: EventTarget | null) {
+  return target instanceof window.HTMLElement
+    && (target.isContentEditable || target.closest('input:not([type="checkbox"]), textarea, select'))
+}
+
+function pasteFiles(event: ClipboardEvent) {
+  if (dialogOpen.value || event.defaultPrevented || loading.value || saving.value || !directory.value) return
+  const target = event.target
+  if (isTextField(target)) return
+  const transfer = event.clipboardData
+  if (!transfer) return
+  if (transfer.files.length) {
+    event.preventDefault()
+    enqueueUploads(transfer.files)
+    return
+  }
+  if (!window.getSelection()?.toString() && target instanceof window.Node && filePanel.value?.contains(target)
+      && clipboard.value && clipboardMarker && transfer.getData(clipboardType) === clipboardMarker) {
+    event.preventDefault()
+    void pasteEntries()
   }
 }
 
-type FileAction = 'mkdir' | 'rename' | 'edit' | 'remove'
+function copyOrCut(event: ClipboardEvent, action: 'copy' | 'move') {
+  const target = event.target
+  if (dialogOpen.value || event.defaultPrevented || busy.value || !checkedEntries.value.length || !event.clipboardData) return
+  if (window.getSelection()?.toString() || isTextField(target)) return
+  holdEntries(action, checkedEntries.value)
+  clipboardMarker = String(Math.random())
+  event.clipboardData.setData(clipboardType, clipboardMarker)
+  event.preventDefault()
+}
+
+function enqueueUploads(files: Iterable<File>) {
+  const current = directory.value?.path
+  if (!current || loading.value || saving.value) return
+  for (const file of files) {
+    const item = reactive<UploadItem>({
+      id: ++nextUpload,
+      path: childPath(current, file.name),
+      size: file.size,
+      received: 0,
+      status: 'waiting',
+    })
+    uploadItems.value.push(item)
+    pendingUploads.push({ item, file, directory: current })
+  }
+  if (!uploading.value && pendingUploads.length) void processUploads()
+}
+
+async function processUploads() {
+  uploading.value = true
+  const changedDirectories = new Set<string>()
+  try {
+    for (let next = pendingUploads.shift(); next; next = pendingUploads.shift()) {
+      const { item, file, directory: destination } = next
+      let id: string | undefined
+      item.status = 'uploading'
+      try {
+        const session = await serverFiles.createUpload(item.path, file.size)
+        id = session.id
+        while (!leaving && item.received < file.size) {
+          const chunk = file.slice(item.received, item.received + session.chunk_size)
+          const { received } = await serverFiles.uploadChunk(id, item.received, chunk)
+          item.received = received
+        }
+        if (leaving) {
+          await serverFiles.abortUpload(id).catch(() => {})
+          return
+        }
+        await serverFiles.completeUpload(id)
+        item.status = 'done'
+        changedDirectories.add(destination)
+      } catch (e) {
+        item.error = e instanceof APIError && e.status === 413 ? '服务器拒绝了上传分片，分片大小超出限制' : errorText(e, '上传失败')
+        item.status = 'failed'
+        if (id) await serverFiles.abortUpload(id).catch(() => {})
+      }
+    }
+  } finally {
+    uploading.value = false
+    if (!leaving && directory.value && changedDirectories.has(directory.value.path)) await loadDirectory()
+  }
+}
+
+function holdEntries(action: 'copy' | 'move', entriesToHold: ServerFileEntry[]) {
+  clipboard.value = { action, entries: entriesToHold }
+  clipboardMarker = ''
+}
+
+async function runBatch(
+  action: string,
+  targets: ServerFileEntry[],
+  perform: (entry: ServerFileEntry) => Promise<unknown>,
+) {
+  const failures: { path: string; reason: string }[] = []
+  const succeeded = new Set<string>()
+  for (const entry of targets) {
+    try {
+      await perform(entry)
+      succeeded.add(entry.path)
+    } catch (e) {
+      failures.push({ path: entry.path, reason: errorText(e, `${action}失败`) })
+    }
+  }
+  batchResult.value = { action, succeeded: succeeded.size, failures }
+  return succeeded
+}
+
+async function pasteEntries() {
+  const transfer = clipboard.value
+  const destination = directory.value?.path
+  if (!transfer || !destination || busy.value) return
+  saving.value = true
+  try {
+    const move = transfer.action === 'move'
+    const succeeded = await runBatch(move ? '移动' : '复制', transfer.entries, entry => serverFiles[transfer.action](entry.path, destination))
+    if (move) {
+      const remaining = transfer.entries.filter(entry => !succeeded.has(entry.path))
+      clipboard.value = remaining.length ? { action: 'move', entries: remaining } : undefined
+    }
+    await loadDirectory()
+  } finally {
+    saving.value = false
+  }
+}
+
+type FileAction = 'mkdir' | 'rename' | 'edit' | 'remove' | 'mode' | 'owner'
 const actions = {
   mkdir: { title: '新建文件夹', submit: '创建', done: '文件夹已创建' },
   rename: { title: '重命名', submit: '保存', done: '名称已修改' },
   edit: { title: '编辑文本', submit: '保存', done: '文件已保存' },
   remove: { title: '确认删除', submit: '删除', done: '已删除' },
+  mode: { title: '修改权限', submit: '保存', done: '权限已修改' },
+  owner: { title: '修改所有者', submit: '保存', done: '所有者已修改' },
 }
-const target = shallowRef<{ action: FileAction; path: string }>()
+const target = shallowRef<{ action: FileAction; path: string; entries: ServerFileEntry[] }>()
 const dialog = computed(() => target.value && actions[target.value.action])
 const dialogOpen = ref(false)
 const cancelButton = ref<ButtonInstance>()
@@ -94,8 +280,8 @@ const dialogError = ref('')
 const readingText = ref(false)
 const textReady = ref(false)
 
-async function openAction(action: FileAction, path: string, name = '') {
-  const selection = { action, path }
+async function openAction(action: FileAction, path: string, name = '', items: ServerFileEntry[] = []) {
+  const selection = { action, path, entries: items }
   target.value = selection
   draft.value = name
   dialogError.value = ''
@@ -126,6 +312,16 @@ async function submit() {
     dialogError.value = '请输入名称，不能使用 /、. 或 .. 作为路径名称'
     return
   }
+  if (action === 'mode' && !/^[0-7]{3,4}$/.test(draft.value)) {
+    dialogError.value = '请输入三位或四位权限数字（0 到 7）'
+    nameInput.value?.focus()
+    return
+  }
+  if (action === 'owner' && !draft.value.trim()) {
+    dialogError.value = '请输入所有者的用户名'
+    nameInput.value?.focus()
+    return
+  }
   saving.value = true
   dialogError.value = ''
   try {
@@ -133,10 +329,18 @@ async function submit() {
       case 'mkdir': await serverFiles.mkdir(childPath(path, draft.value)); break
       case 'rename': await serverFiles.rename(path, draft.value); break
       case 'edit': await serverFiles.saveText(path, draft.value); break
-      case 'remove': await serverFiles.remove(path); break
+      case 'remove':
+        await runBatch('删除', selection.entries, entry => serverFiles.remove(entry.path))
+        break
+      case 'mode':
+        await runBatch('修改权限', selection.entries, entry => serverFiles.attributes(entry.path, { mode: draft.value }))
+        break
+      case 'owner':
+        await runBatch('修改所有者', selection.entries, entry => serverFiles.attributes(entry.path, { owner: draft.value.trim() }))
+        break
     }
     dialogOpen.value = false
-    ElMessage.success(actions[action].done)
+    if (action === 'mkdir' || action === 'rename' || action === 'edit') ElMessage.success(actions[action].done)
     await loadDirectory()
   } catch (e) {
     dialogError.value = errorText(e, `${actions[action].submit}失败`)
@@ -145,24 +349,35 @@ async function submit() {
   }
 }
 
+function openAttributes(action: 'mode' | 'owner', items: ServerFileEntry[]) {
+  const first = items[0]
+  if (!first) return
+  const value = items.every(entry => entry[action] === first[action]) ? first[action] : ''
+  return openAction(action, items.length === 1 ? first.path : '', value, items)
+}
+
 function menu(entry: ServerFileEntry): MenuItem[] {
   if (entry.kind === 'other') return []
   return [
     { label: '重命名', icon: 'edit', onSelect: () => { void openAction('rename', entry.path, entry.name) } },
-    { label: '删除', icon: 'trash', danger: true, divided: true, onSelect: () => { void openAction('remove', entry.path) } },
+    { label: '复制', icon: 'log', onSelect: () => holdEntries('copy', [entry]) },
+    { label: '剪切', icon: 'up', onSelect: () => holdEntries('move', [entry]) },
+    { label: '修改权限', icon: 'settings', divided: true, onSelect: () => { void openAttributes('mode', [entry]) } },
+    { label: '修改所有者', icon: 'settings', onSelect: () => { void openAttributes('owner', [entry]) } },
+    { label: '删除', icon: 'trash', danger: true, divided: true, onSelect: () => { void openAction('remove', entry.path, '', [entry]) } },
   ]
 }
 </script>
 
 <template>
   <PageHeader title="文件管理" description="">
-    <input ref="fileInput" type="file" hidden @change="upload"/>
+    <input ref="fileInput" type="file" multiple hidden @change="chooseFiles"/>
     <el-button :loading="loading" :disabled="busy" @click="loadDirectory()"><AppIcon v-if="!loading" name="refresh"/>刷新</el-button>
-    <el-button :loading="uploading" :disabled="busy || !directory" @click="fileInput?.click()"><AppIcon v-if="!uploading" name="up"/>上传文件</el-button>
+    <el-button :disabled="loading || saving || !directory" @click="fileInput?.click()"><AppIcon name="upload"/>上传文件</el-button>
     <el-button type="primary" :disabled="busy || !directory" @click="directory && openAction('mkdir', directory.path)"><AppIcon name="plus"/>新建文件夹</el-button>
   </PageHeader>
 
-  <div class="panel file-panel">
+  <div ref="filePanel" class="panel file-panel" tabindex="-1" @copy="copyOrCut($event, 'copy')" @cut="copyOrCut($event, 'move')" @dragover="allowFileDrop" @drop="dropFiles">
     <div class="panel-h file-location">
       <el-button size="small" :disabled="busy || !parent" @click="parent && loadDirectory(parent.path)"><AppIcon name="up"/>上一级</el-button>
       <nav class="file-crumbs" aria-label="当前目录">
@@ -173,15 +388,58 @@ function menu(entry: ServerFileEntry): MenuItem[] {
         </template>
       </nav>
     </div>
+    <div v-if="directory" class="panel-h file-toolbar" role="group" aria-label="文件操作">
+      <el-checkbox
+        v-if="actionableEntries.length"
+        :model-value="checkedEntries.length === actionableEntries.length"
+        :indeterminate="checkedEntries.length > 0 && checkedEntries.length < actionableEntries.length"
+        :disabled="busy" @change="checkedPaths = new Set($event ? actionableEntries.map(entry => entry.path) : [])"
+      >全选</el-checkbox>
+      <span v-if="checkedEntries.length" class="muted">已选 {{ checkedEntries.length }} 项</span>
+      <el-button size="small" :disabled="busy || !checkedEntries.length" @click="holdEntries('copy', checkedEntries)">复制</el-button>
+      <el-button size="small" :disabled="busy || !checkedEntries.length" @click="holdEntries('move', checkedEntries)">剪切</el-button>
+      <el-button size="small" :disabled="busy || !clipboard" @click="pasteEntries">粘贴<span v-if="clipboard">（{{ clipboard.entries.length }} 项）</span></el-button>
+      <el-button size="small" :disabled="busy || !checkedEntries.length" @click="openAttributes('mode', checkedEntries)">修改权限</el-button>
+      <el-button size="small" type="danger" plain :disabled="busy || !checkedEntries.length" @click="openAction('remove', checkedEntries[0].path, '', checkedEntries)">删除</el-button>
+    </div>
+    <el-alert v-if="batchResult" :type="batchResult.failures.length ? 'warning' : 'success'" :role="batchResult.failures.length ? 'alert' : 'status'" show-icon @close="batchResult = undefined">
+      <template #title>
+        {{ batchResult.action }}成功 {{ batchResult.succeeded }} 项<span v-if="batchResult.failures.length">，失败 {{ batchResult.failures.length }} 项</span>
+      </template>
+      <ul v-if="batchResult.failures.length" class="file-errors">
+        <li v-for="failure in batchResult.failures" :key="failure.path"><span class="file-path">{{ failure.path }}</span>：{{ failure.reason }}</li>
+      </ul>
+    </el-alert>
+    <div v-if="uploadItems.length" class="file-uploads" role="region" aria-label="上传进度">
+      <div class="file-toolbar">
+        <strong>上传进度</strong>
+        <el-button v-if="!uploading" size="small" text @click="uploadItems = []">清除记录</el-button>
+      </div>
+      <ul>
+        <li v-for="item in uploadItems" :key="item.id">
+          <span class="file-path">{{ item.path }}</span>
+          <span v-if="item.status === 'failed'" class="file-upload-error">{{ item.error }}</span>
+          <span v-else-if="item.status === 'done'" role="status">已上传</span>
+          <span v-else-if="item.status === 'waiting'">等待上传</span>
+          <span v-else-if="item.received === item.size" role="status">正在保存</span>
+          <el-progress v-else :percentage="Math.floor(item.received * 100 / item.size)" :aria-label="`上传 ${item.path}`"/>
+        </li>
+      </ul>
+    </div>
+    <p v-if="directory" class="file-drop-hint muted">将本机文件拖到此处，或复制后按 Ctrl+V / ⌘V 上传。</p>
     <el-alert v-if="loadError && directory" :title="loadError" role="alert" type="error" :closable="false" show-icon/>
     <el-alert v-if="skippedNames > 0" :title="`有 ${skippedNames} 项因名称编码无法显示。`" type="warning" :closable="false" show-icon/>
     <ListState :loading="!directory && !loadError" :error="directory ? '' : loadError" :empty="!entries.length" icon="folder" :title="skippedNames > 0 ? '没有可显示的项目' : '文件夹为空'" @retry="loadDirectory()">
       <div ref="tableRegion" class="tbl-wrap file-table-region" tabindex="0" role="region" aria-label="文件列表" :aria-busy="loading">
         <table class="file-table" role="table">
           <caption class="sr">文件列表</caption>
-          <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">名称</th><th role="columnheader" scope="col">类型</th><th role="columnheader" scope="col">大小（字节）</th><th role="columnheader" scope="col">修改时间</th><th role="columnheader" scope="col">操作</th></tr></thead>
+          <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col"><span class="sr">选择</span></th><th role="columnheader" scope="col">名称</th><th role="columnheader" scope="col">类型</th><th role="columnheader" scope="col">大小（字节）</th><th role="columnheader" scope="col">权限</th><th role="columnheader" scope="col">所有者</th><th role="columnheader" scope="col">修改时间</th><th role="columnheader" scope="col">操作</th></tr></thead>
           <tbody role="rowgroup">
             <tr v-for="entry in rows" :key="entry.path" role="row">
+              <td role="cell" class="file-checkbox">
+                <el-checkbox v-if="entry.kind !== 'other'" :model-value="checkedPaths.has(entry.path)" :aria-label="`选择 ${entry.name}`" :disabled="busy"
+                  @change="$event ? checkedPaths.add(entry.path) : checkedPaths.delete(entry.path)"/>
+              </td>
               <th role="rowheader" scope="row" class="file-name">
                 <AppIcon :name="entry.kind === 'dir' ? 'folder' : entry.kind === 'link' ? 'link' : 'log'"/>
                 <button v-if="entry.kind === 'dir'" type="button" class="link" :disabled="busy" @click="loadDirectory(entry.path)">{{ entry.name }}</button>
@@ -189,6 +447,8 @@ function menu(entry: ServerFileEntry): MenuItem[] {
               </th>
               <td role="cell" class="file-kind">{{ kindLabels[entry.kind] }}</td>
               <td role="cell" class="num file-size">{{ entry.kind === 'file' ? byteCount.format(entry.size) : '—' }}<span v-if="entry.kind === 'file'" class="file-size-unit" aria-hidden="true"> 字节</span></td>
+              <td role="cell" class="file-mode"><span class="file-attribute-label">权限 </span>{{ entry.mode || '—' }}</td>
+              <td role="cell" class="file-owner"><span class="file-attribute-label">所有者 </span>{{ entry.owner || '—' }}</td>
               <td role="cell" class="num muted file-time">{{ formatTime(entry.modified_at) }}</td>
               <td role="cell" class="actions">
                 <span v-if="entry.kind !== 'other'" class="row-act">
@@ -216,14 +476,26 @@ function menu(entry: ServerFileEntry): MenuItem[] {
     @opened="target?.action === 'remove' ? cancelButton?.ref?.focus() : nameInput?.focus()"
   >
     <el-alert v-if="dialogError" :title="dialogError" role="alert" type="error" :closable="false" show-icon/>
-    <p v-if="target?.action === 'remove'">确定永久删除 <code class="file-path">{{ target.path }}</code>？</p>
+    <p v-if="target?.action === 'remove'">
+      确定永久删除 <code v-if="target.entries.length === 1" class="file-path">{{ target.path }}</code><template v-else>选中的 {{ target.entries.length }} 项</template>？
+    </p>
     <template v-else-if="target?.action === 'edit'">
       <p class="file-path mono">{{ target.path }}</p>
       <p v-if="readingText" class="state" role="status">正在读取文件…</p>
       <el-input v-if="textReady" v-model="draft" type="textarea" :rows="12" :disabled="saving" aria-label="文件内容" spellcheck="false"/>
     </template>
     <el-form v-else label-position="top" @submit.prevent="submit">
-      <el-form-item :label="target?.action === 'rename' ? '新名称' : '文件夹名称'"><el-input ref="nameInput" v-model="draft" :disabled="saving"/></el-form-item>
+      <template v-if="target?.action === 'mode' || target?.action === 'owner'">
+        <p v-if="target.path" class="file-path mono">{{ target.path }}</p>
+        <p v-else>为选中的 {{ target.entries.length }} 项设置权限。</p>
+        <el-form-item v-if="target.action === 'mode'" label="权限（如 0644）">
+          <el-input ref="nameInput" v-model="draft" name="mode" inputmode="numeric" :disabled="saving" @input="dialogError = ''"/>
+        </el-form-item>
+        <el-form-item v-else label="所有者（服务器用户名）">
+          <el-input ref="nameInput" v-model="draft" name="owner" autocapitalize="none" spellcheck="false" :disabled="saving" @input="dialogError = ''"/>
+        </el-form-item>
+      </template>
+      <el-form-item v-else :label="target?.action === 'rename' ? '新名称' : '文件夹名称'"><el-input ref="nameInput" v-model="draft" :disabled="saving"/></el-form-item>
     </el-form>
     <template #footer>
       <el-button ref="cancelButton" :disabled="saving" @click="dialogOpen = false">取消</el-button>

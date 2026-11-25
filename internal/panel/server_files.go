@@ -3,12 +3,16 @@ package panel
 import (
 	json "encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -27,21 +31,27 @@ type serverFileEntry struct {
 	Kind       string `json:"kind"`
 	Size       int64  `json:"size"`
 	ModifiedAt string `json:"modified_at"`
+	Mode       string `json:"mode"`
+	Owner      string `json:"owner"`
 }
 
 func (a *App) registerServerFiles() {
 	for pattern, handler := range map[string]http.HandlerFunc{
-		"GET /api/v1/server/files/list":     listServerFiles,
-		"GET /api/v1/server/files/download": downloadServerFile,
-		"GET /api/v1/server/files/text":     serverFileText,
-		"PUT /api/v1/server/files/text":     serverFileText,
-		"PUT /api/v1/server/files/upload":   uploadServerFile,
-		"POST /api/v1/server/files/mkdir":   makeServerDirectory,
-		"POST /api/v1/server/files/rename":  renameServerFile,
-		"DELETE /api/v1/server/files":       deleteServerFile,
+		"GET /api/v1/server/files/list":        listServerFiles,
+		"GET /api/v1/server/files/download":    downloadServerFile,
+		"GET /api/v1/server/files/text":        serverFileText,
+		"PUT /api/v1/server/files/text":        serverFileText,
+		"PUT /api/v1/server/files/upload":      uploadServerFile,
+		"POST /api/v1/server/files/mkdir":      makeServerDirectory,
+		"POST /api/v1/server/files/rename":     renameServerFile,
+		"POST /api/v1/server/files/copy":       a.transferServerFile(false),
+		"POST /api/v1/server/files/move":       a.transferServerFile(true),
+		"POST /api/v1/server/files/attributes": changeServerFileAttributes,
+		"DELETE /api/v1/server/files":          deleteServerFile,
 	} {
 		a.Mux.Handle(pattern, a.RequireAuth(handler))
 	}
+	a.registerServerFileUploads()
 }
 
 func serverFilePath(w http.ResponseWriter, raw string, allowRoot bool) string {
@@ -97,6 +107,7 @@ func listServerFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	entries := make([]serverFileEntry, 0, len(children))
 	skippedNames := 0
+	owners := make(map[uint32]string)
 	for _, child := range children {
 		if !utf8.ValidString(child.Name()) {
 			skippedNames++
@@ -119,9 +130,19 @@ func listServerFiles(w http.ResponseWriter, r *http.Request) {
 		case info.Mode()&os.ModeSymlink != 0:
 			kind = "link"
 		}
+		stat := info.Sys().(*syscall.Stat_t)
+		if _, ok := owners[stat.Uid]; !ok {
+			uid := strconv.FormatUint(uint64(stat.Uid), 10)
+			owner, err := user.LookupId(uid)
+			if err == nil {
+				uid = owner.Username
+			}
+			owners[stat.Uid] = uid
+		}
 		entries = append(entries, serverFileEntry{
 			Name: child.Name(), Path: filepath.Join(path, child.Name()), Kind: kind,
 			Size: info.Size(), ModifiedAt: info.ModTime().UTC().Format(time.RFC3339),
+			Mode: fmt.Sprintf("%03o", stat.Mode&07777), Owner: owners[stat.Uid],
 		})
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -339,16 +360,20 @@ func renameServerFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func serverFileCanRenameOrDelete(w http.ResponseWriter, path, action string) bool {
+	return serverFileOperationInfo(w, path, action) != nil
+}
+
+func serverFileOperationInfo(w http.ResponseWriter, path, action string) os.FileInfo {
 	info, err := os.Lstat(path)
 	if err != nil {
 		writeServerFileError(w, err, action)
-		return false
+		return nil
 	}
 	if !info.IsDir() && !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
 		WriteError(w, http.StatusBadRequest, "unsupported_file_type", "不能"+action+"设备、管道等特殊文件")
-		return false
+		return nil
 	}
-	return true
+	return info
 }
 
 func deleteServerFile(w http.ResponseWriter, r *http.Request) {
