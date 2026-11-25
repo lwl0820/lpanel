@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"读取后端开发和配置验证约定"}
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"沿用域名绑定、Nginx 配置生效和证书流程"}
+{"file":".trellis/spec/frontend/api-contract.md","reason":"沿用编排项目和程序的共用绑定入口及错误展示"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"扩展现有 Element Plus 域名绑定弹窗"}

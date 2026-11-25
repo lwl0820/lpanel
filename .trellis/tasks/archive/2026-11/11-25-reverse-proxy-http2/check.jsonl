@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"核对现有绑定、证书和 Nginx 配置生效行为"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"按改动范围验证真实 Nginx 行为"}
+{"file":".trellis/spec/frontend/api-contract.md","reason":"核对绑定设置的提交与回显"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查弹窗交互、无障碍和生产构建"}
