@@ -49,6 +49,8 @@ const removeFiles = ref(false)
 const bindOpen = ref(false)
 const bindPreset = ref<BindPreset>()
 const { operation, label: operationLabel, busy: certificateBusy, track } = useOperation(domains.operation)
+const { operation: supervisorOperation, track: trackSupervisor } = useOperation(domains.operation)
+const installingSupervisor = ref(false)
 
 const menu = computed<MenuItem[]>(() => [
   { label: '启动设置', icon: 'settings', onSelect: () => { tab.value = 'settings' } },
@@ -91,6 +93,20 @@ async function load() {
   }
 }
 onMounted(load)
+
+async function installSupervisor() {
+  if (installingSupervisor.value) return
+  installingSupervisor.value = true
+  try {
+    const op = await programs.installSupervisor()
+    const result = await trackSupervisor(op, '安装并启动 Supervisor', 'Supervisor 已就绪')
+    if (result) await load()
+  } catch (e) {
+    ElMessage.error(errorText(e, '无法提交 Supervisor 安装操作'))
+  } finally {
+    installingSupervisor.value = false
+  }
+}
 
 watch(selectedId, () => {
   runtime.value = undefined
@@ -285,7 +301,16 @@ async function bindingDone(result: BindResult) {
   </PageHeader>
 
   <OperationBanner :operation="operation" :label="operationLabel" @close="operation = null"/>
-  <el-alert v-if="dependencyError" title="程序无法启停，请检查服务器上的 Supervisor" type="warning" :description="dependencyError" :closable="false" show-icon/>
+  <OperationBanner v-if="installingSupervisor || supervisorOperation?.status === 'failed'" :operation="supervisorOperation" label="安装并启动 Supervisor" @close="supervisorOperation = null"/>
+  <div v-if="dependencyError && !(installingSupervisor && supervisorOperation?.status === 'running')" class="banner program-supervisor" role="alert">
+    <AppIcon name="alert"/>
+    <div class="txt">
+      <strong>Supervisor 未就绪，暂时无法启停程序</strong>
+      <p>面板会按需安装 Supervisor，并将服务设为开机自启。</p>
+      <details><summary>查看连接详情</summary>{{ dependencyError }}</details>
+    </div>
+    <el-button type="primary" :loading="installingSupervisor" @click="installSupervisor">安装并启动 Supervisor</el-button>
+  </div>
 
   <ListState :loading="loading" :error="listError" :empty="!entries.length" icon="play" title="还没有程序" description="创建程序后，可上传文件并设置启动方式。" @retry="load">
     <div class="program-management">

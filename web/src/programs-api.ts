@@ -1,4 +1,4 @@
-import { request } from './api'
+import { request, type Operation } from './api'
 
 export interface Program {
   id: string
@@ -29,6 +29,7 @@ const path = (id: string) => `/programs/${encodeURIComponent(id)}`
 
 export const programs = {
   list: () => request<{ programs: Program[]; dependency_error: string }>('/programs'),
+  installSupervisor: () => request<Operation>('/programs/supervisor/install', { method: 'POST' }),
   create: (name: string) => request<Program>('/programs', { method: 'POST', body: JSON.stringify({ name }) }),
   save: (id: string, settings: ProgramSettings) => request<Program>(path(id), { method: 'PUT', body: JSON.stringify(settings) }),
   action: (id: string, action: ProgramAction) => request<Program>(`${path(id)}/actions/${action}`, { method: 'POST' }),

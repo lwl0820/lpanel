@@ -2,10 +2,12 @@ package panel
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -47,6 +49,60 @@ func (a *App) checkProgramSupervisor(ctx context.Context) error {
 		return fmt.Errorf("Supervisor 未返回服务进程：%s", out)
 	}
 	return fmt.Errorf("无法连接 Supervisor，请安装并启动 Supervisor 服务：%w", err)
+}
+
+func (a *App) startSupervisorInstallation(w http.ResponseWriter, r *http.Request) {
+	// 刷新页面后再次提交时，继续跟踪同一个安装操作。
+	a.programsMu.Lock()
+	defer a.programsMu.Unlock()
+	const kind = "program_supervisor_install"
+	op := Operation{Kind: kind, Status: "running"}
+	err := a.DB.QueryRowContext(r.Context(),
+		"SELECT id,created_at,updated_at FROM operations WHERE kind=? AND status='running' LIMIT 1", kind,
+	).Scan(&op.ID, &op.CreatedAt, &op.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		op, err = a.StartOperation(kind, a.ensureProgramSupervisor)
+	}
+	if err != nil {
+		WriteError(w, 500, "operation_error", "无法提交 Supervisor 安装操作")
+		return
+	}
+	WriteJSON(w, http.StatusAccepted, op)
+}
+
+func (a *App) ensureProgramSupervisor(ctx context.Context) (string, error) {
+	err := a.checkProgramSupervisor(ctx)
+	if err == nil {
+		return "Supervisor 已就绪", nil
+	}
+	if errors.Is(err, exec.ErrNotFound) {
+		out, err := a.Command(ctx, "apt-get", "update")
+		if err != nil {
+			return string(out), fmt.Errorf("更新系统软件包索引失败：%w", err)
+		}
+		out, err = a.Command(ctx, "apt-get", "install", "-y", "--no-install-recommends", "supervisor")
+		if err != nil {
+			return string(out), fmt.Errorf("安装 Supervisor 软件包失败：%w", err)
+		}
+	}
+	out, err := a.Command(ctx, "systemctl", "enable", "--now", "supervisor.service")
+	if err != nil {
+		return string(out), fmt.Errorf("启用 Supervisor 服务失败：%w", err)
+	}
+	// systemd 可以先报告服务已启动，随后 supervisord 才开始接受连接。
+	ready, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	for {
+		err := a.checkProgramSupervisor(ready)
+		if err == nil {
+			return "Supervisor 已就绪", nil
+		}
+		select {
+		case <-ready.Done():
+			return err.Error(), errors.New("Supervisor 服务已启动，但面板仍无法连接")
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 func supervisorProgramStatus(p Program, output string) Program {

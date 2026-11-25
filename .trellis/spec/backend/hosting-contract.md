@@ -33,6 +33,8 @@
 
 程序的 `GET /api/v1/programs` 返回 `programs` 和 `dependency_error`。Supervisor 不可用时仍可使用面板的其他功能。详情的 `/runtime` 读取主进程的 PID、CPU 百分比、常驻内存字节数、TCP 连接数及当前监听地址端口。缺少前一次 CPU 读数时返回 null。
 
+管理员可通过 `POST /api/v1/programs/supervisor/install` 按需安装并启用 Supervisor。接口返回 HTTP 202 和操作记录，重复提交可继续跟踪进行中的安装。缺少 supervisorctl 时通过 apt 安装软件包，已有客户端时直接启用服务，以 supervisorctl 能读取服务 PID 作为成功条件。
+
 `GET /api/v1/programs/{id}/logs/stream` 使用管理员会话和 SSE。首次发送 `snapshot`，随后发送 `append`，两者的数据均为 JSON 字符串。日志轮转或截短时以新快照替换旧内容。Nginx 关闭此路由的响应缓冲，升级时已有面板入口也会补齐对应规则。浏览器切换程序或离开日志时应结束旧连接。
 
 ## 3. 数据与环境契约

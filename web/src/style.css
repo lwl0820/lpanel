@@ -607,6 +607,10 @@ td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
   font: var(--t-xs)/1.8 var(--mono);
 }
 .program-feedback { margin-block: 8px; color: var(--muted); font-size: var(--t-sm); overflow-wrap: anywhere; }
+.program-supervisor { background: var(--warn-soft); color: var(--warn); flex-wrap: wrap; }
+.program-supervisor .txt { flex: 1 1 250px; }
+.program-supervisor p { margin: 4px 0; }
+.program-supervisor summary { cursor: pointer; width: fit-content; }
 .program-danger { color: var(--bad); }
 .program-settings { max-inline-size: 34rem; }
 .program-field-help { margin-block: 4px 0; color: var(--muted); font-size: var(--t-sm); line-height: 1.55; }

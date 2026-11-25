@@ -116,6 +116,9 @@ func Open(root, version string) (*App, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = a.Root
 		cmd.Env = append(os.Environ(), "TMPDIR="+filepath.Join(a.Root, ".tmp"))
+		if name == "apt-get" {
+			cmd.Env = append(cmd.Env, "DEBIAN_FRONTEND=noninteractive")
+		}
 		if name == "ufw" || name == "resolvectl" {
 			cmd.Env = append(cmd.Env, "LC_ALL=C", "LANGUAGE=C")
 		}

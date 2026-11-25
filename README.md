@@ -33,7 +33,7 @@
 
 ## 宿主机程序
 
-使用「程序管理」时，需在宿主机安装并运行 Supervisor。在 Debian 或 Ubuntu 上可执行 `sudo apt install supervisor` 和 `sudo systemctl enable --now supervisor`。面板的其他功能可独立使用。
+首次打开「程序管理」时，如果提示 Supervisor 未就绪，点击「安装并启动 Supervisor」。面板会按需从 Debian 或 Ubuntu 的软件源安装软件包，启动服务并设置开机自启。连接成功后提示自动消失，失败时可查看日志并重试。
 
 新建程序后点击「打开目录」上传文件，回到「启动设置」填写入口相对路径、参数及已有系统用户，再点击「启动」。建议为业务程序使用非特权账户。运行指标和监听端口来自 Supervisor 报告的主进程。浏览器断开后，Supervisor 仍会托管程序。运行中的程序异常退出时会自动拉起。服务器或 Supervisor 服务重启后，需要在面板手动启动。
 

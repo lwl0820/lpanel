@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -188,6 +189,100 @@ func TestProgramDependencyUnavailable(t *testing.T) {
 	}
 	if w := call(a, "GET", "/api/v1/health", "", nil); w.Code != 200 {
 		t.Fatalf("缺少 Supervisor 时影响面板健康检查：%d", w.Code)
+	}
+}
+
+func TestProgramSupervisorInstall(t *testing.T) {
+	a, _ := testApp(t)
+	const path = "/api/v1/programs/supervisor/install"
+	if w := call(a, "POST", path, "", nil); w.Code != http.StatusUnauthorized {
+		t.Fatalf("未登录时提交安装返回 %d", w.Code)
+	}
+	cookie := call(a, "POST", "/api/v1/auth/login", `{"username":"管理员","password":"test-password"}`, nil).Result().Cookies()[0]
+	submit := func() Operation {
+		t.Helper()
+		w := call(a, "POST", path, "", cookie)
+		var op Operation
+		if err := json.Unmarshal(w.Body.Bytes(), &op); w.Code != http.StatusAccepted || err != nil || op.ID == "" {
+			t.Fatalf("提交安装返回 %d %s", w.Code, w.Body.String())
+		}
+		return op
+	}
+	block := make(chan struct{})
+	ready := false
+	var commands []string
+	a.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		command := strings.Join(append([]string{name}, args...), " ")
+		commands = append(commands, command)
+		switch command {
+		case "supervisorctl -c /etc/supervisor/supervisord.conf pid":
+			if ready {
+				return []byte("121"), nil
+			}
+			return nil, &exec.Error{Name: name, Err: exec.ErrNotFound}
+		case "apt-get update":
+			select {
+			case <-block:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		case "apt-get install -y --no-install-recommends supervisor":
+		case "systemctl enable --now supervisor.service":
+			ready = true
+		default:
+			return nil, errors.New("意外命令：" + command)
+		}
+		return nil, nil
+	}
+	first := submit()
+	second := submit()
+	close(block)
+	waitProjectOperation(t, a, first.ID)
+	if second.ID != first.ID {
+		t.Fatalf("重复请求创建了两次安装：%s 和 %s", first.ID, second.ID)
+	}
+	pid := "supervisorctl -c /etc/supervisor/supervisord.conf pid"
+	want := []string{pid, "apt-get update", "apt-get install -y --no-install-recommends supervisor", "systemctl enable --now supervisor.service", pid}
+	if !slices.Equal(commands, want) {
+		t.Fatalf("安装过程错误：%v", commands)
+	}
+}
+
+func TestProgramSupervisorInstallRecovery(t *testing.T) {
+	a, _ := testApp(t)
+	var calls []string
+	state := "缺少客户端"
+	a.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name)
+		switch name {
+		case "supervisorctl":
+			switch state {
+			case "缺少客户端":
+				return nil, exec.ErrNotFound
+			case "未启动":
+				return []byte("connection refused"), errors.New("连接失败")
+			default:
+				return []byte("332"), nil
+			}
+		case "apt-get":
+			return []byte("软件源连接失败"), errors.New("退出码 100")
+		case "systemctl":
+			state = "已启动"
+			return nil, nil
+		}
+		return nil, errors.New("意外命令")
+	}
+	log, err := a.ensureProgramSupervisor(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "更新系统软件包索引失败") || log != "软件源连接失败" || !slices.Equal(calls, []string{"supervisorctl", "apt-get"}) {
+		t.Fatalf("软件源失败后仍继续安装或缺少日志：%v %s %v", calls, log, err)
+	}
+	state, calls = "未启动", nil
+	if _, err := a.ensureProgramSupervisor(t.Context()); err != nil || !slices.Equal(calls, []string{"supervisorctl", "systemctl", "supervisorctl"}) {
+		t.Fatalf("已有安装时应只启动服务并验证连接：%v %v", calls, err)
+	}
+	calls = nil
+	if _, err := a.ensureProgramSupervisor(t.Context()); err != nil || !slices.Equal(calls, []string{"supervisorctl"}) {
+		t.Fatalf("正常服务不应被更改：%v %v", calls, err)
 	}
 }
 

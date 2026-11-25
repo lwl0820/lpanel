@@ -39,6 +39,7 @@ func (a *App) registerPrograms() error {
 	for pattern, handler := range map[string]http.HandlerFunc{
 		"GET /api/v1/programs":                        a.listPrograms,
 		"POST /api/v1/programs":                       a.createProgram,
+		"POST /api/v1/programs/supervisor/install":    a.startSupervisorInstallation,
 		"GET /api/v1/programs/{id}":                   a.getProgram,
 		"PUT /api/v1/programs/{id}":                   a.updateProgram,
 		"POST /api/v1/programs/{id}/actions/{action}": a.programAction,
