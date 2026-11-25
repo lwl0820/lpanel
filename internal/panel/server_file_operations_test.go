@@ -163,3 +163,100 @@ func TestServerFilesAttributes(t *testing.T) {
 		t.Fatalf("只更改所有者时应保留全部权限：%v，%v", fileInfo, err)
 	}
 }
+
+func TestServerFilesAttributesRecursive(t *testing.T) {
+	request := serverFileTestRequest(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, "目录")
+	child := filepath.Join(dir, "子目录")
+	file := filepath.Join(child, "文件")
+	outside := filepath.Join(root, "外部文件")
+	link := filepath.Join(child, "外部链接")
+	for _, path := range []string{dir, child} {
+		if err := os.Mkdir(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []string{file, outside} {
+		if err := os.WriteFile(path, nil, 0640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(path string, mode os.FileMode, uid uint32) {
+		t.Helper()
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotUID := info.Sys().(*syscall.Stat_t).Uid; info.Mode() != mode || gotUID != uid {
+			t.Fatalf("%s 权限或所有者不符，实际为 %v、%d，期望为 %v、%d", path, info.Mode(), gotUID, mode, uid)
+		}
+	}
+	uid := uint32(os.Geteuid())
+	request("POST", "/attributes", fmt.Sprintf(`{"path":%q,"mode":"750"}`, dir), 200)
+	check(dir, os.ModeDir|0750, uid)
+	check(child, os.ModeDir|0755, uid)
+	check(file, 0640, uid)
+
+	// 收紧目录权限后，恢复从属目录的可访问性，再核对文件是否已先更新。
+	request("POST", "/attributes", fmt.Sprintf(`{"path":%q,"mode":"600","recursive":true}`, dir), 200)
+	check(dir, os.ModeDir|0600, uid)
+	request("POST", "/attributes", fmt.Sprintf(`{"path":%q,"mode":"700"}`, dir), 200)
+	check(child, os.ModeDir|0600, uid)
+	request("POST", "/attributes", fmt.Sprintf(`{"path":%q,"mode":"700"}`, child), 200)
+	check(file, 0600, uid)
+
+	var mountSource string
+	if uid == 0 {
+		mountSource = t.TempDir()
+		if err := os.Chmod(mountSource, 0755); err != nil {
+			t.Fatal(err)
+		}
+		mountPoint := filepath.Join(dir, "挂载点")
+		if err := os.Mkdir(mountPoint, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := unix.Mount(mountSource, mountPoint, "", unix.MS_BIND, ""); err != nil {
+			t.Logf("无法建立绑定挂载，跳过挂载边界检查：%v", err)
+			mountSource = ""
+		} else {
+			t.Cleanup(func() {
+				if err := unix.Unmount(mountPoint, 0); err != nil {
+					t.Error(err)
+				}
+			})
+		}
+	}
+
+	request("POST", "/attributes", fmt.Sprintf(`{"path":%q,"mode":"700","recursive":true}`, dir), 200)
+	check(dir, os.ModeDir|0700, uid)
+	check(child, os.ModeDir|0700, uid)
+	check(file, 0700, uid)
+	check(link, os.ModeSymlink|0777, uid)
+	check(outside, 0640, uid)
+	if uid != 0 {
+		t.Log("实际递归变更所有者需要以 root 运行")
+		return
+	}
+
+	request("POST", "/attributes", fmt.Sprintf(`{"path":%q,"owner":"65534","recursive":true}`, dir), 200)
+	check(dir, os.ModeDir|0700, 65534)
+	check(child, os.ModeDir|0700, 65534)
+	check(file, 0700, 65534)
+	check(link, os.ModeSymlink|0777, 65534)
+	check(outside, 0640, 0)
+
+	request("POST", "/attributes", fmt.Sprintf(`{"path":%q,"mode":"750","owner":"0","recursive":true}`, dir), 200)
+	check(dir, os.ModeDir|0750, 0)
+	check(child, os.ModeDir|0750, 0)
+	check(file, 0750, 0)
+	check(link, os.ModeSymlink|0777, 0)
+	check(outside, 0640, 0)
+	if mountSource != "" {
+		check(mountSource, os.ModeDir|0755, 0)
+	}
+}

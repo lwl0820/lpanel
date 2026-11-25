@@ -141,8 +141,12 @@ func (a *App) transferServerFile(move bool) http.HandlerFunc {
 }
 
 func serverFileMount(path string, flags int) (uint64, error) {
+	return serverFileMountAt(unix.AT_FDCWD, path, flags)
+}
+
+func serverFileMountAt(dirFD int, path string, flags int) (uint64, error) {
 	var stat unix.Statx_t
-	err := unix.Statx(unix.AT_FDCWD, path, flags|unix.AT_NO_AUTOMOUNT, unix.STATX_MNT_ID, &stat)
+	err := unix.Statx(dirFD, path, flags|unix.AT_NO_AUTOMOUNT, unix.STATX_MNT_ID, &stat)
 	if err == nil && stat.Mask&unix.STATX_MNT_ID == 0 {
 		err = unix.ENOSYS
 	}
@@ -181,9 +185,10 @@ func validateServerFileTree(source string, stage os.FileInfo, sourceMount uint64
 
 func changeServerFileAttributes(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Path  string  `json:"path"`
-		Mode  *string `json:"mode"`
-		Owner *string `json:"owner"`
+		Path      string  `json:"path"`
+		Mode      *string `json:"mode"`
+		Owner     *string `json:"owner"`
+		Recursive bool    `json:"recursive"`
 	}
 	if !readServerFileJSON(w, r, &input) {
 		return
@@ -236,33 +241,101 @@ func changeServerFileAttributes(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "link_mode_unsupported", "不能修改符号链接的权限")
 		return
 	}
-	if fileType != unix.S_IFDIR && fileType != unix.S_IFREG && fileType != unix.S_IFLNK {
-		WriteError(w, http.StatusBadRequest, "unsupported_file_type", "不能修改设备、管道等特殊文件的属性")
+
+	recursive := input.Recursive && fileType == unix.S_IFDIR
+	var mount uint64
+	if recursive {
+		mount, err = serverFileMountAt(fd, "", unix.AT_EMPTY_PATH)
+		if err != nil {
+			writeServerFileError(w, err, action)
+			return
+		}
+	}
+	changed := false
+	var apply func(int, *unix.Stat_t) error
+	apply = func(fd int, stat *unix.Stat_t) error {
+		descriptorPath := fmt.Sprintf("/proc/self/fd/%d", fd)
+		fileType := stat.Mode & unix.S_IFMT
+		switch fileType {
+		case unix.S_IFDIR:
+			if recursive {
+				// 后序应用目录属性，避免权限收紧后无法修改子项。
+				dir, err := os.Open(descriptorPath)
+				if err != nil {
+					return err
+				}
+				names, err := dir.Readdirnames(-1)
+				_ = dir.Close()
+				if err != nil {
+					return err
+				}
+				for _, name := range names {
+					if err := changeServerFileChildAttributes(fd, name, mount, apply); err != nil {
+						return err
+					}
+				}
+			}
+		case unix.S_IFREG, unix.S_IFLNK:
+		default:
+			return unix.ENOTSUP
+		}
+		ownerChanged := uid != -1 && uint32(uid) != stat.Uid
+		if ownerChanged {
+			action = "修改所有者"
+			if err := unix.Fchownat(fd, "", uid, -1, unix.AT_EMPTY_PATH|unix.AT_SYMLINK_NOFOLLOW); err != nil {
+				return err
+			}
+			changed = true
+		}
+		// Linux 变更所有者时可能清除 setuid/setgid，单独更改所有者时恢复原权限。
+		originalMode := uint64(stat.Mode & 07777)
+		restoreMode := ownerChanged && fileType == unix.S_IFREG && originalMode&06000 != 0
+		if fileType != unix.S_IFLNK && (input.Mode != nil || restoreMode) {
+			action = "修改权限"
+			targetMode := mode
+			if input.Mode == nil {
+				targetMode = originalMode
+			}
+			// 通过已打开的条目修改权限，兼容没有 fchmodat2 的内核。
+			if err := unix.Chmod(descriptorPath, uint32(targetMode)); err != nil {
+				return err
+			}
+			changed = true
+		}
+		return nil
+	}
+	if err := apply(fd, &stat); err != nil {
+		switch {
+		case changed && recursive:
+			WriteError(w, http.StatusInternalServerError, "attributes_update_incomplete", "部分条目的权限或所有者已修改，请刷新并核对文件属性")
+		case changed:
+			WriteError(w, http.StatusInternalServerError, "attributes_update_incomplete", "所有者已修改，权限设置失败，请刷新并核对文件属性")
+		case errors.Is(err, unix.ENOTSUP):
+			WriteError(w, http.StatusBadRequest, "unsupported_file_type", "不能修改设备、管道等特殊文件的属性")
+		default:
+			writeServerFileError(w, err, action)
+		}
 		return
 	}
-	ownerChanged := uid != -1 && uint32(uid) != stat.Uid
-	if ownerChanged {
-		if err := unix.Fchownat(fd, "", uid, -1, unix.AT_EMPTY_PATH|unix.AT_SYMLINK_NOFOLLOW); err != nil {
-			writeServerFileError(w, err, "修改所有者")
-			return
-		}
-	}
-	// Linux 变更所有者时可能清除 setuid/setgid，单独更改所有者时恢复原权限。
-	originalMode := uint64(stat.Mode & 07777)
-	restoreMode := ownerChanged && fileType == unix.S_IFREG && originalMode&06000 != 0
-	if input.Mode == nil {
-		mode = originalMode
-	}
-	if input.Mode != nil || restoreMode {
-		// 通过已打开的条目修改权限，兼容没有 fchmodat2 的内核。
-		if err := unix.Chmod(fmt.Sprintf("/proc/self/fd/%d", fd), uint32(mode)); err != nil {
-			if ownerChanged {
-				WriteError(w, http.StatusInternalServerError, "attributes_update_incomplete", "所有者已修改，权限设置失败，请刷新并核对文件属性")
-			} else {
-				writeServerFileError(w, err, "修改权限")
-			}
-			return
-		}
-	}
 	WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func changeServerFileChildAttributes(parentFD int, name string, mount uint64, apply func(int, *unix.Stat_t) error) error {
+	fd, err := unix.Openat(parentFD, name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	childMount, err := serverFileMountAt(fd, "", unix.AT_EMPTY_PATH|unix.AT_SYMLINK_NOFOLLOW)
+	if err != nil {
+		return err
+	}
+	if childMount != mount {
+		return nil
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return err
+	}
+	return apply(fd, &stat)
 }

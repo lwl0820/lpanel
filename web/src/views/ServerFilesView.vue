@@ -261,24 +261,49 @@ async function pasteEntries() {
   }
 }
 
-type FileAction = 'mkdir' | 'rename' | 'edit' | 'remove' | 'mode' | 'owner'
+type FileAction = 'mkdir' | 'rename' | 'edit' | 'remove' | 'attributes' | 'compress' | 'extract'
 const actions = {
   mkdir: { title: '新建文件夹', submit: '创建', done: '文件夹已创建' },
   rename: { title: '重命名', submit: '保存', done: '名称已修改' },
   edit: { title: '编辑文本', submit: '保存', done: '文件已保存' },
   remove: { title: '确认删除', submit: '删除', done: '已删除' },
-  mode: { title: '修改权限', submit: '保存', done: '权限已修改' },
-  owner: { title: '修改所有者', submit: '保存', done: '所有者已修改' },
+  attributes: { title: '修改权限和所有者', submit: '保存', done: '已修改' },
+  compress: { title: '压缩为 ZIP', submit: '压缩', done: 'ZIP 压缩包已创建' },
+  extract: { title: '解压 ZIP', submit: '解压', done: 'ZIP 已解压' },
 }
 const target = shallowRef<{ action: FileAction; path: string; entries: ServerFileEntry[] }>()
 const dialog = computed(() => target.value && actions[target.value.action])
 const dialogOpen = ref(false)
 const cancelButton = ref<ButtonInstance>()
 const nameInput = useTemplateRef('nameInput')
+const modeInput = useTemplateRef('modeInput')
+const ownerInput = useTemplateRef('ownerInput')
+const attributes = reactive({ applyMode: false, mode: '', applyOwner: false, owner: '', recursive: false })
+const includesDirectory = computed(() => target.value?.entries.some(entry => entry.kind === 'dir'))
+const modeMixed = computed(() => target.value?.entries.some(entry => entry.mode !== target.value?.entries[0]?.mode))
+const ownerMixed = computed(() => target.value?.entries.some(entry => entry.owner !== target.value?.entries[0]?.owner))
 const draft = ref('')
 const dialogError = ref('')
 const readingText = ref(false)
 const textReady = ref(false)
+const checkedZip = computed(() => checkedEntries.value.length === 1 && isZipFile(checkedEntries.value[0]) ? checkedEntries.value[0] : undefined)
+const checkedHasLink = computed(() => checkedEntries.value.some(entry => entry.kind === 'link'))
+const nameLabels: Partial<Record<FileAction, string>> = {
+  mkdir: '文件夹名称',
+  rename: '新名称',
+  compress: '压缩包名称',
+  extract: '目标文件夹路径',
+}
+
+function isZipFile(entry: ServerFileEntry) {
+  return entry.kind === 'file' && /\.zip$/i.test(entry.name)
+}
+
+function openCompression(items: ServerFileEntry[]) {
+  if (!directory.value || !items.length) return
+  const random = Array.from(window.crypto.getRandomValues(new Uint32Array(2)), value => value.toString(16).padStart(8, '0')).join('')
+  return openAction('compress', directory.value.path, `压缩包-${random}.zip`, items)
+}
 
 async function openAction(action: FileAction, path: string, name = '', items: ServerFileEntry[] = []) {
   const selection = { action, path, entries: items }
@@ -308,19 +333,32 @@ async function submit() {
   if (!selection || saving.value) return
   const { action, path } = selection
   if (action === 'edit' && !textReady.value) return
-  if ((action === 'mkdir' || action === 'rename') && (!draft.value || draft.value === '.' || draft.value === '..' || draft.value.includes('/'))) {
+  const name = action === 'compress' ? draft.value.trim() : draft.value
+  if ((action === 'mkdir' || action === 'rename' || action === 'compress') && (!name || name === '.' || name === '..' || name.includes('/'))) {
     dialogError.value = '请输入名称，不能使用 /、. 或 .. 作为路径名称'
-    return
-  }
-  if (action === 'mode' && !/^[0-7]{3,4}$/.test(draft.value)) {
-    dialogError.value = '请输入三位或四位权限数字（0 到 7）'
     nameInput.value?.focus()
     return
   }
-  if (action === 'owner' && !draft.value.trim()) {
-    dialogError.value = '请输入所有者的用户名'
+  if (action === 'extract' && !draft.value.startsWith('/')) {
+    dialogError.value = '请输入以 / 开头的目标文件夹路径'
     nameInput.value?.focus()
     return
+  }
+  if (action === 'attributes') {
+    if (!attributes.applyMode && !attributes.applyOwner) {
+      dialogError.value = '请至少勾选一项要设置的内容'
+      return
+    }
+    if (attributes.applyMode && !/^[0-7]{3,4}$/.test(attributes.mode)) {
+      dialogError.value = '请输入三位或四位权限数字（0 到 7）'
+      modeInput.value?.focus()
+      return
+    }
+    if (attributes.applyOwner && !attributes.owner.trim()) {
+      dialogError.value = '请输入所有者的用户名'
+      ownerInput.value?.focus()
+      return
+    }
   }
   saving.value = true
   dialogError.value = ''
@@ -329,18 +367,29 @@ async function submit() {
       case 'mkdir': await serverFiles.mkdir(childPath(path, draft.value)); break
       case 'rename': await serverFiles.rename(path, draft.value); break
       case 'edit': await serverFiles.saveText(path, draft.value); break
+      case 'compress':
+        await serverFiles.compress(path, selection.entries.map(entry => entry.name), /\.zip$/i.test(name) ? name : `${name}.zip`)
+        break
+      case 'extract':
+        await serverFiles.extract(path, draft.value)
+        break
       case 'remove':
         await runBatch('删除', selection.entries, entry => serverFiles.remove(entry.path))
         break
-      case 'mode':
-        await runBatch('修改权限', selection.entries, entry => serverFiles.attributes(entry.path, { mode: draft.value }))
+      case 'attributes': {
+        const mode = attributes.applyMode ? attributes.mode : undefined
+        const owner = attributes.applyOwner ? attributes.owner.trim() : undefined
+        const recursive = attributes.recursive
+        await runBatch('修改', selection.entries, entry => serverFiles.attributes(entry.path, {
+          mode,
+          owner,
+          recursive: recursive && entry.kind === 'dir' ? true : undefined,
+        }))
         break
-      case 'owner':
-        await runBatch('修改所有者', selection.entries, entry => serverFiles.attributes(entry.path, { owner: draft.value.trim() }))
-        break
+      }
     }
     dialogOpen.value = false
-    if (action === 'mkdir' || action === 'rename' || action === 'edit') ElMessage.success(actions[action].done)
+    if (action !== 'remove' && action !== 'attributes') ElMessage.success(actions[action].done)
     await loadDirectory()
   } catch (e) {
     dialogError.value = errorText(e, `${actions[action].submit}失败`)
@@ -349,23 +398,31 @@ async function submit() {
   }
 }
 
-function openAttributes(action: 'mode' | 'owner', items: ServerFileEntry[]) {
+function openAttributes(items: ServerFileEntry[]) {
   const first = items[0]
   if (!first) return
-  const value = items.every(entry => entry[action] === first[action]) ? first[action] : ''
-  return openAction(action, items.length === 1 ? first.path : '', value, items)
+  attributes.applyMode = false
+  attributes.mode = items.every(entry => entry.mode === first.mode) ? first.mode : ''
+  attributes.applyOwner = false
+  attributes.owner = items.every(entry => entry.owner === first.owner) ? first.owner : ''
+  attributes.recursive = false
+  return openAction('attributes', items.length === 1 ? first.path : '', '', items)
 }
 
 function menu(entry: ServerFileEntry): MenuItem[] {
   if (entry.kind === 'other') return []
-  return [
+  const items: MenuItem[] = [
     { label: '重命名', icon: 'edit', onSelect: () => { void openAction('rename', entry.path, entry.name) } },
     { label: '复制', icon: 'log', onSelect: () => holdEntries('copy', [entry]) },
     { label: '剪切', icon: 'up', onSelect: () => holdEntries('move', [entry]) },
-    { label: '修改权限', icon: 'settings', divided: true, onSelect: () => { void openAttributes('mode', [entry]) } },
-    { label: '修改所有者', icon: 'settings', onSelect: () => { void openAttributes('owner', [entry]) } },
-    { label: '删除', icon: 'trash', danger: true, divided: true, onSelect: () => { void openAction('remove', entry.path, '', [entry]) } },
   ]
+  if (entry.kind !== 'link') items.push({ label: '压缩为 ZIP', icon: 'projects', onSelect: () => { void openCompression([entry]) } })
+  if (isZipFile(entry)) items.push({ label: '解压 ZIP', icon: 'folder', onSelect: () => { if (directory.value) void openAction('extract', entry.path, directory.value.path) } })
+  items.push(
+    { label: '修改权限和所有者', icon: 'settings', divided: true, onSelect: () => { void openAttributes([entry]) } },
+    { label: '删除', icon: 'trash', danger: true, divided: true, onSelect: () => { void openAction('remove', entry.path, '', [entry]) } },
+  )
+  return items
 }
 </script>
 
@@ -399,8 +456,11 @@ function menu(entry: ServerFileEntry): MenuItem[] {
       <el-button size="small" :disabled="busy || !checkedEntries.length" @click="holdEntries('copy', checkedEntries)">复制</el-button>
       <el-button size="small" :disabled="busy || !checkedEntries.length" @click="holdEntries('move', checkedEntries)">剪切</el-button>
       <el-button size="small" :disabled="busy || !clipboard" @click="pasteEntries">粘贴<span v-if="clipboard">（{{ clipboard.entries.length }} 项）</span></el-button>
-      <el-button size="small" :disabled="busy || !checkedEntries.length" @click="openAttributes('mode', checkedEntries)">修改权限</el-button>
+      <el-button size="small" :disabled="busy || !checkedEntries.length || checkedHasLink" @click="openCompression(checkedEntries)">压缩</el-button>
+      <el-button v-if="checkedZip" size="small" :disabled="busy" @click="openAction('extract', checkedZip.path, directory.path)">解压</el-button>
+      <el-button size="small" :disabled="busy || !checkedEntries.length" @click="openAttributes(checkedEntries)">修改权限和所有者</el-button>
       <el-button size="small" type="danger" plain :disabled="busy || !checkedEntries.length" @click="openAction('remove', checkedEntries[0].path, '', checkedEntries)">删除</el-button>
+      <span v-if="checkedHasLink" class="muted">取消勾选链接后可压缩。</span>
     </div>
     <el-alert v-if="batchResult" :type="batchResult.failures.length ? 'warning' : 'success'" :role="batchResult.failures.length ? 'alert' : 'status'" show-icon @close="batchResult = undefined">
       <template #title>
@@ -476,26 +536,38 @@ function menu(entry: ServerFileEntry): MenuItem[] {
     @opened="target?.action === 'remove' ? cancelButton?.ref?.focus() : nameInput?.focus()"
   >
     <el-alert v-if="dialogError" :title="dialogError" role="alert" type="error" :closable="false" show-icon/>
-    <p v-if="target?.action === 'remove'">
-      确定永久删除 <code v-if="target.entries.length === 1" class="file-path">{{ target.path }}</code><template v-else>选中的 {{ target.entries.length }} 项</template>？
-    </p>
+    <template v-if="target?.action === 'remove'">
+      <p>确定永久删除 <code v-if="target.entries.length === 1" class="file-path">{{ target.path }}</code><template v-else>选中的 {{ target.entries.length }} 项</template>？</p>
+      <p v-if="includesDirectory">选中文件夹中的所有文件和子文件夹也会永久删除。</p>
+    </template>
     <template v-else-if="target?.action === 'edit'">
       <p class="file-path mono">{{ target.path }}</p>
       <p v-if="readingText" class="state" role="status">正在读取文件…</p>
       <el-input v-if="textReady" v-model="draft" type="textarea" :rows="12" :disabled="saving" aria-label="文件内容" spellcheck="false"/>
     </template>
     <el-form v-else label-position="top" @submit.prevent="submit">
-      <template v-if="target?.action === 'mode' || target?.action === 'owner'">
+      <template v-if="target?.action === 'attributes'">
         <p v-if="target.path" class="file-path mono">{{ target.path }}</p>
-        <p v-else>为选中的 {{ target.entries.length }} 项设置权限。</p>
-        <el-form-item v-if="target.action === 'mode'" label="权限（如 0644）">
-          <el-input ref="nameInput" v-model="draft" name="mode" inputmode="numeric" :disabled="saving" @input="dialogError = ''"/>
+        <p v-else>已选 {{ target.entries.length }} 项</p>
+        <el-checkbox v-model="attributes.applyMode" :disabled="saving" @change="dialogError = ''">设置权限</el-checkbox>
+        <el-form-item label="权限（如 0644）">
+          <el-input ref="modeInput" v-model="attributes.mode" name="mode" inputmode="numeric" :placeholder="modeMixed ? '所选项目的权限不同' : undefined"
+            :disabled="saving || !attributes.applyMode" @input="dialogError = ''"/>
         </el-form-item>
-        <el-form-item v-else label="所有者（服务器用户名）">
-          <el-input ref="nameInput" v-model="draft" name="owner" autocapitalize="none" spellcheck="false" :disabled="saving" @input="dialogError = ''"/>
+        <el-checkbox v-model="attributes.applyOwner" :disabled="saving" @change="dialogError = ''">设置所有者</el-checkbox>
+        <el-form-item label="所有者（服务器用户名）">
+          <el-input ref="ownerInput" v-model="attributes.owner" name="owner" autocapitalize="none" spellcheck="false" :placeholder="ownerMixed ? '所选项目的所有者不同' : undefined"
+            :disabled="saving || !attributes.applyOwner" @input="dialogError = ''"/>
+        </el-form-item>
+        <el-checkbox v-if="includesDirectory" v-model="attributes.recursive" :disabled="saving">同时应用到子文件和子文件夹</el-checkbox>
+      </template>
+      <template v-else-if="target">
+        <p v-if="target.action === 'compress'">将 {{ target.entries.length }} 项压缩到当前文件夹。</p>
+        <p v-else-if="target.action === 'extract'" class="file-path mono">{{ target.path }}</p>
+        <el-form-item :label="nameLabels[target.action]">
+          <el-input ref="nameInput" v-model="draft" :name="target.action" :disabled="saving" @input="dialogError = ''"/>
         </el-form-item>
       </template>
-      <el-form-item v-else :label="target?.action === 'rename' ? '新名称' : '文件夹名称'"><el-input ref="nameInput" v-model="draft" :disabled="saving"/></el-form-item>
     </el-form>
     <template #footer>
       <el-button ref="cancelButton" :disabled="saving" @click="dialogOpen = false">取消</el-button>

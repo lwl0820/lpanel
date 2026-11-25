@@ -2,6 +2,7 @@ package panel
 
 import (
 	json "encoding/json/v2"
+	"errors"
 	"io"
 	"mime"
 	"net/http"
@@ -68,13 +69,6 @@ func TestServerFilesLifecycle(t *testing.T) {
 	query := "?path=" + url.QueryEscape(path)
 	request("PUT", "/upload"+query, "原始内容\n", 200)
 	request("PUT", "/upload"+query, "不能覆盖", 409)
-	conflict := request("DELETE", "?path="+url.QueryEscape(dir), "", 409)
-	var failure struct {
-		Error APIError `json:"error"`
-	}
-	if err := json.Unmarshal(conflict.Body.Bytes(), &failure); err != nil || failure.Error.Code != "directory_not_empty" {
-		t.Fatalf("删除非空目录的错误原因不正确：%s", conflict.Body.String())
-	}
 
 	list := request("GET", "/list?path="+url.QueryEscape(dir+"//./"), "", 200)
 	var result struct {
@@ -129,6 +123,71 @@ func TestServerFilesLifecycle(t *testing.T) {
 		t.Fatalf("删除后目录仍有文件：%s", got)
 	}
 	request("DELETE", "?path="+url.QueryEscape(dir), "", 200)
+}
+
+func TestServerFilesDeleteNonEmptyDirectory(t *testing.T) {
+	request := serverFileTestRequest(t)
+	request("DELETE", "?path=%2F", "", 400)
+	parent := t.TempDir()
+	directory := filepath.Join(parent, "待删除")
+	nested := filepath.Join(directory, "子目录")
+	if err := os.MkdirAll(nested, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "文件"), []byte("目录内"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(parent, "保留")
+	if err := os.Mkdir(external, 0750); err != nil {
+		t.Fatal(err)
+	}
+	externalFile := filepath.Join(external, "文件")
+	if err := os.WriteFile(externalFile, []byte("目录外"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(nested, "目录外的链接")); err != nil {
+		t.Fatal(err)
+	}
+	request("DELETE", "?path="+url.QueryEscape(directory), "", 200)
+	if _, err := os.Lstat(directory); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("非空目录未删除：%v", err)
+	}
+	if contents, err := os.ReadFile(externalFile); err != nil || string(contents) != "目录外" {
+		t.Fatalf("目录外的文件被删除或修改：%q，%v", contents, err)
+	}
+}
+
+func TestServerFilesDeleteDirectoryPartialFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("此用例需要普通用户权限以复现删除失败")
+	}
+	request := serverFileTestRequest(t)
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "只读目录")
+	if err := os.Mkdir(locked, 0700); err != nil {
+		t.Fatal(err)
+	}
+	retained := filepath.Join(locked, "保留")
+	removed := filepath.Join(dir, "可删除")
+	for _, path := range []string{retained, removed} {
+		if err := os.WriteFile(path, []byte("内容"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(locked, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0700) })
+	response := request("DELETE", "?path="+url.QueryEscape(dir), "", 500)
+	if !strings.Contains(response.Body.String(), "directory_delete_incomplete") {
+		t.Fatalf("未提示目录可能已部分删除：%s", response.Body.String())
+	}
+	if _, err := os.Stat(retained); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(removed); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("预期可删除文件已被删除：%v", err)
+	}
 }
 
 func TestServerFilesNonUTF8Names(t *testing.T) {

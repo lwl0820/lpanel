@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime"
 	"net/http"
 	"os"
@@ -46,6 +47,8 @@ func (a *App) registerServerFiles() {
 		"POST /api/v1/server/files/rename":     renameServerFile,
 		"POST /api/v1/server/files/copy":       a.transferServerFile(false),
 		"POST /api/v1/server/files/move":       a.transferServerFile(true),
+		"POST /api/v1/server/files/compress":   compressServerFiles,
+		"POST /api/v1/server/files/extract":    extractServerFile,
 		"POST /api/v1/server/files/attributes": changeServerFileAttributes,
 		"DELETE /api/v1/server/files":          deleteServerFile,
 	} {
@@ -72,7 +75,7 @@ func writeServerFileError(w http.ResponseWriter, err error, action string) {
 	case errors.Is(err, os.ErrNotExist):
 		WriteError(w, http.StatusNotFound, "not_found", "文件或目录不存在")
 	case errors.Is(err, unix.ENOTEMPTY):
-		WriteError(w, http.StatusConflict, "directory_not_empty", "只能删除空目录，请先清空目录")
+		WriteError(w, http.StatusConflict, "directory_not_empty", "目录仍有内容，未能完全删除")
 	case errors.Is(err, os.ErrExist):
 		WriteError(w, http.StatusConflict, "already_exists", "已有同名文件或目录")
 	case errors.Is(err, os.ErrPermission), errors.Is(err, unix.EROFS):
@@ -378,10 +381,41 @@ func serverFileOperationInfo(w http.ResponseWriter, path, action string) os.File
 
 func deleteServerFile(w http.ResponseWriter, r *http.Request) {
 	path := serverFilePath(w, r.URL.Query().Get("path"), false)
-	if path == "" || !serverFileCanRenameOrDelete(w, path, "删除") {
+	if path == "" {
 		return
 	}
-	if err := os.Remove(path); err != nil {
+	info := serverFileOperationInfo(w, path, "删除")
+	if info == nil {
+		return
+	}
+	if info.IsDir() {
+		// 先检查整棵目录树，拒绝选中挂载点或含挂载点的目录。
+		parentMount, err := serverFileMount(filepath.Dir(path), 0)
+		if err == nil {
+			err = filepath.WalkDir(path, func(entryPath string, _ fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				mount, err := serverFileMount(entryPath, unix.AT_SYMLINK_NOFOLLOW)
+				if err == nil && mount != parentMount {
+					return unix.EXDEV
+				}
+				return err
+			})
+		}
+		if errors.Is(err, unix.EXDEV) {
+			WriteError(w, http.StatusConflict, "directory_contains_mount", "目录是挂载点或包含挂载点，无法删除")
+			return
+		}
+		if err != nil {
+			writeServerFileError(w, err, "检查目录")
+			return
+		}
+		if err := os.RemoveAll(path); err != nil {
+			WriteError(w, http.StatusInternalServerError, "directory_delete_incomplete", "目录未能完全删除，部分内容可能已删除，请刷新并核对剩余内容")
+			return
+		}
+	} else if err := os.Remove(path); err != nil {
 		writeServerFileError(w, err, "删除")
 		return
 	}
