@@ -829,3 +829,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 30: 反向代理域名 HTTP/2 开关
+<!-- trellis-session: v=2 fp=db209936d6c1fb91 -->
+
+**Date**: 2026-11-25
+**Task**: 反向代理域名 HTTP/2 开关
+**Branch**: `main`
+
+### Summary
+
+编排项目和宿主机程序的 HTTPS 域名绑定默认启用 HTTP/2。旧版 Nginx 在共享监听上开启，新版支持逐域名关闭。Nginx 1.24.0、1.30.7 和 Chrome 本地验收通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a6f5150` | feat: 为反向代理域名绑定添加 HTTP/2 开关 |
+
+### Status
+
+[OK] **Completed**

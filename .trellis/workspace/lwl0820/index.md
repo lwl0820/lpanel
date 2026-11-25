@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 29
+- **Total Sessions**: 30
 - **Last Active**: 2026-11-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~831 | Active |
+| `journal-1.md` | ~853 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 30 | 2026-11-25 | 反向代理域名 HTTP/2 开关 | `a6f5150` | `main` |
 | 29 | 2026-11-25 | 文件管理批量操作与分片上传 | `3003a65` | `main` |
 | 28 | 2026-11-25 | 宿主机程序管理与 B 版界面验收 | `4f6de5c` | `main` |
 | 27 | 2026-11-25 | 补全编排项目反代请求头 | `0e4983e` | `main` |
