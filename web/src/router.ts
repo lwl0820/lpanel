@@ -4,6 +4,7 @@ export const routes: RouteRecordRaw[] = [
   { path: '/', component: () => import('./views/OverviewView.vue'), meta: { title: '概览' } },
   { path: '/projects', component: () => import('./views/ProjectsView.vue'), meta: { title: '编排项目', section: 'containers' } },
   { path: '/images', component: () => import('./views/ImagesView.vue'), meta: { title: '镜像管理', section: 'containers' } },
+  { path: '/programs', component: () => import('./views/ProgramsView.vue'), meta: { title: '程序管理' } },
   { path: '/sites', component: () => import('./views/SitesView.vue'), meta: { title: '静态网站' } },
   { path: '/domains', component: () => import('./views/DomainsView.vue'), meta: { title: '域名与证书' } },
   { path: '/domains/acme-accounts', component: () => import('./views/AcmeAccountsView.vue'), meta: { title: 'ACME 账户管理' } },

@@ -57,6 +57,10 @@ func TestProjectHostListenersMatchContainerProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	_, connections, err := processTCPPorts(proc, "10 11")
+	if err != nil || connections != 1 {
+		t.Fatalf("主进程及其子进程应只有一条 TCP 连接，得到 %d, %v", connections, err)
+	}
 	ports, err := containerTCPListeners(proc, "web", "PID\n10\n11\n12\n")
 	if err != nil {
 		t.Fatal(err)

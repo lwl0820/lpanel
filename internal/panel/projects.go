@@ -1135,14 +1135,18 @@ func (a *App) checkProjectDirectoryForRemoval(dir string) error {
 	if err := a.checkProjectDirectory(dir, false); err != nil {
 		return err
 	}
+	return checkDirectoryMounts(dir, "项目")
+}
+
+func checkDirectoryMounts(dir, kind string) error {
 	// 面板根路径可能经过符号链接，挂载点按系统实际路径识别。
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return fmt.Errorf("无法确认项目目录：%w", err)
+		return fmt.Errorf("无法确认%s目录：%w", kind, err)
 	}
 	mountInfo, err := os.ReadFile("/proc/self/mountinfo")
 	if err != nil {
-		return fmt.Errorf("无法检查项目目录的挂载点：%w", err)
+		return fmt.Errorf("无法检查%s目录的挂载点：%w", kind, err)
 	}
 	unescape := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
 	for line := range strings.SplitSeq(string(mountInfo), "\n") {
@@ -1152,7 +1156,7 @@ func (a *App) checkProjectDirectoryForRemoval(dir string) error {
 		}
 		mountPoint := unescape.Replace(fields[4])
 		if mountPoint == realDir || strings.HasPrefix(mountPoint, realDir+string(os.PathSeparator)) {
-			return fmt.Errorf("项目目录有宿主机挂载点，请先卸载：%s", mountPoint)
+			return fmt.Errorf("%s目录有宿主机挂载点，请先卸载：%s", kind, mountPoint)
 		}
 	}
 	return nil

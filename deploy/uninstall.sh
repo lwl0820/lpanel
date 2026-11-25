@@ -114,6 +114,7 @@ PYTHON
 
 echo '卸载后，面板以及通过 LPanel 配置的业务域名将停止访问。'
 echo '管理员账号、数据库和证书保留，系统软件包及其他 Nginx 配置保留。'
+echo 'Supervisor 继续托管已启动的程序，保留程序目录和托管配置。如需清理，请在卸载前从「程序管理」删除。'
 read -r -p '是否同时清理 LPanel 管理的 Compose 项目？[y/N]：' cleanup || exit 1
 project_list='[]'
 case "$cleanup" in

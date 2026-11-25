@@ -6,6 +6,10 @@
 
 ## 2. 签名
 
+- 宿主机程序由 `/api/v1/programs` 管理。新建和复制均生成独立 ID 与 `Root/programs/<id>` 目录，初始停止。启动设置保存在 SQLite，启动和重启时应用到对应的 Supervisor 配置。保存入口时要求目录内的普通文件，并为其设置执行权限。
+- 复制返回 `program` 与 `skipped_links`，跳过符号链接。删除程序时移除该程序的绑定、托管配置和日志，显式传入 `remove_files=true` 时才删除业务目录。复制和清理均检查目录内的宿主机挂载点。
+- 程序域名绑定使用 `kind=program` 和程序 ID。新选的上游必须与主进程当前监听的 TCP 端点匹配。程序停止后可保留原端点修改证书设置或协议。
+
 - RegisterProjectRoutes、RegisterSiteRoutes、RegisterUpgradeRoutes 在 Open 中创建表并注册接口；域名由 registerDomains 接入。
 - SaveBinding(ctx, Binding)、DeleteBinding(ctx, id)、ApplyNginx(ctx)、RequestCertificate(ctx, id)、RenewCertificates(ctx) 是项目、网站和面板复用的边界。需指定账户时使用 SaveBindingWithAccount 和 RequestCertificateWithAccount。
 - SaveSite(ctx, Site)、DeleteSite(ctx, id) 同步网站记录和关联绑定。
@@ -27,9 +31,13 @@
 - 安装入口 `sudo bash deploy/install.sh [选项]` 支持 `--repository`、`--archive`、`--username`、`--password`、`--port`、`--login-path`、`--domain`、`--auto-cert`、`--agree-tos`、`--email`、`--acme-provider` 和 `--acme-eab-file`。 [参数详情](../../../docs/install.md#命令行参数)
 - 官方安装布局的卸载入口为 `sudo bash deploy/uninstall.sh`。脚本从终端询问是否清理 Compose 项目，并单独读取最终确认。
 
+程序的 `GET /api/v1/programs` 返回 `programs` 和 `dependency_error`。Supervisor 不可用时仍可使用面板的其他功能。详情的 `/runtime` 读取主进程的 PID、CPU 百分比、常驻内存字节数、TCP 连接数及当前监听地址端口。缺少前一次 CPU 读数时返回 null。
+
+`GET /api/v1/programs/{id}/logs/stream` 使用管理员会话和 SSE。首次发送 `snapshot`，随后发送 `append`，两者的数据均为 JSON 字符串。日志轮转或截短时以新快照替换旧内容。Nginx 关闭此路由的响应缓冲，升级时已有面板入口也会补齐对应规则。浏览器切换程序或离开日志时应结束旧连接。
+
 ## 3. 数据与环境契约
 
-Binding 包含 id、kind(panel/project/site)、resource_id、domain、upstream、directory、spa、service、container_port、host_port、auto_certificate、certificate_status、certificate_error、expires_at 和实际签发账户 `certificate_account_id`。域名全局唯一。项目绑定记录由 service 和 container_port 标识动态发布的端口，或由 host_port 标识固定的宿主机端口。网站使用 directory/spa，面板使用安装配置端口。
+Binding 包含 id、kind(panel/project/site/program)、resource_id、domain、upstream、directory、spa、service、container_port、host_port、auto_certificate、certificate_status、certificate_error、expires_at 和实际签发账户 `certificate_account_id`。域名全局唯一。项目绑定记录由 service 和 container_port 标识动态发布的端口，或由 host_port 标识固定的宿主机端口。网站使用 directory/spa，面板使用安装配置端口。
 
 编排项目的代理位置用 `$remote_addr` 覆盖 `X-Real-IP` 和 `X-Forwarded-For`，上游收到的两个头均为单个地址。所有项目共享 HTTP 层的升级映射。请求带非空 `Upgrade` 时保留协议并向上游发送 `Connection: upgrade`，普通请求使用 `Connection: close`。配置首行保留托管标记，供升级和卸载识别。
 

@@ -4,6 +4,9 @@
 适用于 web/src/api.ts、App.vue 及后续业务页面。规范仅描述已有 Vue 3、TypeScript、Element Plus 基础，不承诺尚未完成的模块。
 
 ## 2. 签名
+
+程序列表返回 `programs` 与 `dependency_error`。详情按当前程序 ID 请求 `/runtime`，CPU、内存与连接数不可读时为 `null`。日志页订阅该程序的 `/logs/stream`，用 `snapshot` 替换历史内容，用 `append` 追加输出，切换程序或离开日志页时关闭订阅。「打开目录」将详情中的 `directory` 作为 `/server/files` 的 `path` 查询参数。
+
 `request<T>(path, options?)` 默认调用 `/api/v1`。`auth.me`、`auth.login` 与 `auth.logout` 对应后端账号接口。启用入口时，`auth.login` 用登录页提供的同源路径提交。`APIError` 保存 `status`、`code` 和 `message`，页面显示中文 `message`。
 
 访问设置返回 `login_path`。`PUT /api/v1/system/access/login-path` 提交 `{"login_path":"/abcdef"}`，并用返回的配置刷新完整登录地址。空值表示根地址。

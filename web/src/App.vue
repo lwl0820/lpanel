@@ -16,6 +16,7 @@ const error = ref('')
 const navigation: { path: string; label: string; shortLabel?: string; icon: IconName }[] = [
   { path: '/', label: '概览', icon: 'overview' },
   { path: '/projects', label: '容器管理', shortLabel: '容器', icon: 'projects' },
+  { path: '/programs', label: '程序管理', shortLabel: '程序', icon: 'play' },
   { path: '/sites', label: '静态网站', shortLabel: '网站', icon: 'sites' },
   { path: '/domains', label: '域名与证书', shortLabel: '域名', icon: 'domains' },
   { path: '/server', label: '服务器管理', shortLabel: '服务器', icon: 'server' },

@@ -5,6 +5,7 @@ import type { Operation } from '../api'
 import { acme, type ACMEAccount } from '../acme-api'
 import { domains, isWildcardHostname, type Binding } from '../domain-api'
 import { projects, type Project } from '../projects-api'
+import { programs, type Program } from '../programs-api'
 import { sites, type Site } from '../sites-api'
 import { certificateActionLabel, certState, daysLeft } from '../cert'
 import { useOperation } from '../useOperation'
@@ -19,6 +20,7 @@ import BindDomainDialog, { type BindResult } from '../components/BindDomainDialo
 import RequestCertificateDialog, { type CertificateRequestResult } from '../components/RequestCertificateDialog.vue'
 const items = ref<Binding[]>([])
 const projectList = ref<Project[]>([])
+const programList = ref<Program[]>([])
 const siteList = ref<Site[]>([])
 const accounts = ref<ACMEAccount[]>([])
 const accountsById = computed(() => new Map(accounts.value.map(account => [account.id, account])))
@@ -31,19 +33,24 @@ const accessURL = ref('')
 async function load() {
   loadError.value = ''
   try {
-    const [bindings, projectData, siteData, accountData] = await Promise.all([domains.list(), projects.list(), sites.list(), acme.list()])
+    const [bindings, projectData, siteData, accountData, programData] = await Promise.all([domains.list(), projects.list(), sites.list(), acme.list(), programs.list()])
     items.value = bindings
     projectList.value = projectData
     siteList.value = siteData
+    programList.value = programData.programs
     accounts.value = accountData.accounts
     now.value = new Date()
   } catch (e) { loadError.value = errorText(e, '读取域名失败') } finally { loading.value = false }
 }
 onMounted(load)
 async function reload() { loading.value = true; await load() }
-const KIND = { panel: '面板', project: '编排项目', site: '静态网站' }
+const KIND = { panel: '面板', project: '编排项目', site: '静态网站', program: '程序' }
 function target(b: Binding) {
   if (b.kind === 'panel') return { name: '本面板', detail: '' }
+  if (b.kind === 'program') return {
+    name: programList.value.find(p => p.id === b.resource_id)?.name ?? '已删除的程序',
+    detail: b.upstream,
+  }
   if (b.kind === 'project') return {
     name: projectList.value.find(p => p.id === b.resource_id)?.name ?? '已删除的项目',
     detail: b.host_port
@@ -95,7 +102,7 @@ async function done(result: BindResult) {
 }
 </script>
 <template>
-  <PageHeader title="域名与证书" description="把域名指向面板、项目或网站，并自动申请 HTTPS 证书。证书到期前 30 天会标记提醒。">
+  <PageHeader title="域名与证书" description="把域名指向面板、项目、程序或网站，并自动申请 HTTPS 证书。证书到期前 30 天会标记提醒。">
     <el-button @click="$router.push('/domains/acme-accounts')"><AppIcon name="cert"/>ACME 账户管理</el-button>
     <el-button :disabled="busy || loading" @click="reload"><AppIcon name="refresh"/>刷新</el-button>
     <el-button type="primary" :disabled="busy" @click="edit()"><AppIcon name="plus"/>绑定域名</el-button>

@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -31,6 +32,69 @@ func domainApp(t *testing.T) *App {
 	a.NginxProbe = func(context.Context, string, string, string) error { return nil }
 	return a
 }
+
+func TestProgramBindingRetainsEndpointAndRollsBackRemoval(t *testing.T) {
+	a := domainApp(t)
+	ctx := t.Context()
+	const id = "program-one"
+	if _, err := a.DB.ExecContext(ctx, `INSERT INTO programs (id, name, entry, args, run_user) VALUES (?, '测试程序', '', '', '')`, id); err != nil {
+		t.Fatal(err)
+	}
+	b := Binding{
+		ID: "first", Kind: "program", ResourceID: id, Domain: "app.example.com",
+		Upstream: "http://[::1]:8080", CertificateStatus: "enabled", ExpiresAt: "2027-01-01",
+	}
+	for _, item := range []Binding{
+		b,
+		{ID: "second", Kind: "program", ResourceID: id, Domain: "second.example.com", Upstream: "http://127.0.0.1:8080"},
+		{ID: "other", Kind: "project", ResourceID: id, Domain: "other.example.com", Upstream: "http://127.0.0.1:8081"},
+		{ID: "other-program", Kind: "program", ResourceID: "program-two", Domain: "other-app.example.com", Upstream: "http://127.0.0.1:8082"},
+	} {
+		if err := a.storeBinding(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b.Upstream = "https://[::1]:8080"
+	b.AutoCertificate = true
+	saved, err := a.SaveBinding(ctx, b)
+	if err != nil || saved.Upstream != b.Upstream || saved.CertificateStatus != "enabled" || saved.ExpiresAt != b.ExpiresAt {
+		t.Fatalf("编辑已停止程序的绑定时，应保留监听目标与证书，结果为 %+v，错误为 %v", saved, err)
+	}
+	b.Upstream = "http://[::1]:8081"
+	if _, err := a.SaveBinding(ctx, b); err == nil || !strings.Contains(err.Error(), "程序当前未监听") {
+		t.Fatalf("停止的程序不能换到新端口，错误为 %v", err)
+	}
+	path := filepath.Join(a.Config.NginxConfigDir, "lpanel.conf")
+	previous, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, proxy, found := strings.Cut(string(previous), "proxy_pass https://[::1]:8080;")
+	proxy, _, _ = strings.Cut(proxy, "}")
+	if !found || !strings.Contains(proxy, "proxy_set_header Upgrade $http_upgrade;") {
+		t.Fatal("程序的 IPv6 上游应支持 WebSocket")
+	}
+	a.NginxProbe = func(context.Context, string, string, string) error { return errors.New("新配置未生效") }
+	if err := a.deleteProgramBindingsLocked(ctx, id); err == nil {
+		t.Fatal("代理应用失败时应返回错误")
+	}
+	items, err := a.ListBindings(ctx)
+	if err != nil || len(items) != 4 {
+		t.Fatalf("代理应用失败后应保留所有原绑定，得到 %+v，错误为 %v", items, err)
+	}
+	if current, err := os.ReadFile(path); err != nil || string(current) != string(previous) {
+		t.Fatalf("代理应用失败后应恢复原配置，错误为 %v", err)
+	}
+	a.NginxProbe = func(context.Context, string, string, string) error { return nil }
+	if err := a.deleteProgramBindingsLocked(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	items, err = a.ListBindings(ctx)
+	if err != nil || len(items) != 2 || items[0].ID != "other-program" || items[1].ID != "other" {
+		t.Fatalf("删除程序应只移除该程序的绑定，得到 %+v，错误为 %v", items, err)
+	}
+}
+
 func TestBindingConfigAndRollback(t *testing.T) {
 	a := domainApp(t)
 	ctx := context.Background()

@@ -24,6 +24,7 @@ type App struct {
 	domainsMu    sync.Mutex
 	projectsMu   sync.Mutex
 	projectLocks map[string]*projectLock
+	programsMu   sync.Mutex
 	configMu     sync.RWMutex
 	firewallMu   sync.Mutex
 	swapMu       sync.Mutex
@@ -47,6 +48,8 @@ type App struct {
 	serverDNSHostRoot       string
 	serverTimeSyncRunning   atomic.Bool
 	monitorLive             monitorLiveState
+	programSupervisorConfig string
+	programSupervisorDir    string
 }
 
 type APIError struct {
@@ -107,6 +110,8 @@ func Open(root, version string) (*App, error) {
 	a.swapFstabPath = "/etc/fstab"
 	a.serverDNSHostRoot = "/"
 	a.serverTimeSyncMarker = "/run/systemd/timesync/synchronized"
+	a.programSupervisorConfig = "/etc/supervisor/supervisord.conf"
+	a.programSupervisorDir = "/etc/supervisor/conf.d"
 	a.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = a.Root
@@ -133,6 +138,10 @@ func Open(root, version string) (*App, error) {
 		return nil, err
 	}
 	if err := a.registerDomains(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := a.registerPrograms(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -184,8 +193,8 @@ func (a *App) setConfig(config Config) {
 	a.configMu.Unlock()
 }
 
-// 旧版升级程序只会重启服务，已有面板入口的上传规则由新版服务补齐。
-func (a *App) refreshProjectImportProxy(ctx context.Context) error {
+// 旧版升级程序只会重启服务，由新版服务为已有面板入口补齐代理规则。
+func (a *App) refreshPanelProxy(ctx context.Context) error {
 	path := filepath.Join(a.currentConfig().NginxConfigDir, "lpanel.conf")
 	config, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -194,16 +203,19 @@ func (a *App) refreshProjectImportProxy(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !bytes.HasPrefix(config, []byte("# 本文件由 LPanel 管理\n")) ||
-		bytes.Contains(config, []byte("location = /api/v1/projects/import {")) {
+	if !bytes.HasPrefix(config, []byte("# 本文件由 LPanel 管理\n")) {
+		return nil
+	}
+	if bytes.Contains(config, []byte("location = /api/v1/projects/import {")) &&
+		bytes.Contains(config, []byte(programLogStreamLocation)) {
 		return nil
 	}
 	return a.ApplyNginx(ctx)
 }
 
 func (a *App) Serve(ctx context.Context) error {
-	if err := a.refreshProjectImportProxy(ctx); err != nil {
-		log.Printf("更新项目导入的 Nginx 配置失败：%v", err)
+	if err := a.refreshPanelProxy(ctx); err != nil {
+		log.Printf("更新面板的 Nginx 代理配置失败：%v", err)
 	}
 	if _, err := a.DB.Exec("UPDATE operations SET status='failed',error='服务重启，操作已中断' WHERE status IN ('queued','running') AND kind!='upgrade'"); err != nil {
 		return err

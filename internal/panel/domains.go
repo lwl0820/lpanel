@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -248,6 +249,14 @@ func (a *App) saveBindingLocked(ctx context.Context, b Binding, accountID string
 	if b.AutoCertificate && strings.HasPrefix(b.Domain, "*.") {
 		return b, errWildcardCertificate
 	}
+	var old Binding
+	oldErr := sql.ErrNoRows
+	if b.ID != "" {
+		old, oldErr = a.binding(ctx, b.ID)
+	}
+	if oldErr == nil && (old.Kind == "program" || b.Kind == "program") && (old.Kind != b.Kind || old.ResourceID != b.ResourceID) {
+		return b, errors.New("不能修改该绑定指向的程序")
+	}
 	switch b.Kind {
 	case "panel":
 		b.ResourceID = "panel"
@@ -260,6 +269,10 @@ func (a *App) saveBindingLocked(ctx context.Context, b Binding, accountID string
 		if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.Path != "" || u.RawQuery != "" || u.User != nil || strings.ContainsAny(b.Upstream, "\n\r ;{}\"$") {
 			return b, fmt.Errorf("应用上游须为有效的 HTTP/HTTPS 地址")
 		}
+	case "program":
+		if err := a.validateProgramBinding(ctx, &b, old); err != nil {
+			return b, err
+		}
 	default:
 		return b, fmt.Errorf("网站类型无效")
 	}
@@ -269,7 +282,6 @@ func (a *App) saveBindingLocked(ctx context.Context, b Binding, accountID string
 			return b, err
 		}
 	}
-	old, oldErr := a.binding(ctx, b.ID)
 	b.CertificateStatus = "disabled"
 	b.CertificateAccountID = ""
 	b.CertificateError = ""
@@ -313,6 +325,74 @@ func (a *App) saveBindingLocked(ctx context.Context, b Binding, accountID string
 	}
 	return b, nil
 }
+
+func (a *App) validateProgramBinding(ctx context.Context, b *Binding, old Binding) error {
+	u, err := url.Parse(b.Upstream)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
+		return errors.New("程序上游须为有效的 HTTP/HTTPS 地址")
+	}
+	address, err := netip.ParseAddr(u.Hostname())
+	port, portErr := strconv.Atoi(u.Port())
+	if err != nil || address.Zone() != "" || portErr != nil || port < 1 || port > 65535 ||
+		b.Upstream != u.Scheme+"://"+u.Host {
+		return errors.New("程序上游须包含监听地址和端口")
+	}
+	address = address.Unmap()
+	endpoint := net.JoinHostPort(address.String(), strconv.Itoa(port))
+	b.Upstream = u.Scheme + "://" + endpoint
+	if old.ID != "" && (old.Upstream == "http://"+endpoint || old.Upstream == "https://"+endpoint) {
+		return nil
+	}
+	p, err := a.program(ctx, b.ResourceID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("程序不存在")
+		}
+		return err
+	}
+	runtime, err := a.programRuntime(ctx, p)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(runtime.Ports, func(listener ProgramPort) bool {
+		return listener.Address == address.String() && listener.Port == port
+	}) {
+		return errors.New("程序当前未监听所选地址和端口，请重新选择")
+	}
+	return nil
+}
+
+// 调用方持有 domainsMu，直至程序记录删除。
+func (a *App) deleteProgramBindingsLocked(ctx context.Context, id string) error {
+	items, err := a.ListBindings(ctx)
+	if err != nil {
+		return err
+	}
+	remaining := slices.DeleteFunc(slices.Clone(items), func(b Binding) bool {
+		return b.Kind == "program" && b.ResourceID == id
+	})
+	if len(remaining) == len(items) {
+		return nil
+	}
+	tx, err := a.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bindings WHERE json_extract(payload, '$.kind') = 'program' AND json_extract(payload, '$.resource_id') = ?`, id); err != nil {
+		return err
+	}
+	if err := a.applyNginxBindings(ctx, a.currentConfig(), remaining, ""); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		_ = tx.Rollback()
+		restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		return errors.Join(err, a.applyNginxBindings(restoreCtx, a.currentConfig(), items, ""))
+	}
+	return nil
+}
 func (a *App) DeleteBinding(ctx context.Context, id string) error {
 	a.domainsMu.Lock()
 	defer a.domainsMu.Unlock()
@@ -352,6 +432,9 @@ func (a *App) ApplyNginx(ctx context.Context) error {
 	defer a.domainsMu.Unlock()
 	return a.applyNginx(ctx)
 }
+
+const programLogStreamLocation = "location ~ ^/api/v1/programs/[^/]+/logs/stream$ {"
+
 func (a *App) renderNginx(items []Binding, marker string, config Config, challengeHost, clientAddr string) string {
 	var out strings.Builder
 	out.WriteString(`# 本文件由 LPanel 管理
@@ -431,6 +514,7 @@ map $http_upgrade $lpanel_connection_upgrade {
 				fmt.Fprintf(&out, "location = %s { client_max_body_size 0; proxy_request_buffering off; proxy_http_version 1.1; %s%s proxy_set_header X-LPanel-Redirect \"\"; }\n", upload, timeout, proxy)
 			}
 			fmt.Fprintf(&out, "location ~ ^/api/v1/projects/[^/]+/export$ { proxy_buffering off; proxy_read_timeout 1h; %s proxy_set_header X-LPanel-Redirect \"\"; }\n", proxy)
+			fmt.Fprintf(&out, "%s proxy_buffering off; proxy_read_timeout 1h; %s proxy_set_header X-LPanel-Redirect \"\"; }\n", programLogStreamLocation, proxy)
 			// 文本按解码后的字节数限制；JSON 转义后的请求可能更大。
 			fmt.Fprintf(&out, "location = /api/v1/server/files/text { client_max_body_size 7m; %s proxy_set_header X-LPanel-Redirect \"\"; }\n", proxy)
 			out.WriteString("location = /.lpanel/config { default_type text/plain; ")
@@ -451,7 +535,7 @@ map $http_upgrade $lpanel_connection_upgrade {
 				fallback = "/index.html"
 			}
 			fmt.Fprintf(&out, "root %q; index index.html; location / { try_files $uri $uri/ %s; }\n", b.Directory, fallback)
-		case "project":
+		case "project", "program":
 			fmt.Fprintf(&out, `location / {
     proxy_pass %s;
     proxy_http_version 1.1;

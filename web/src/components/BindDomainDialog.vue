@@ -4,11 +4,12 @@ import type { FormInstance, FormRules } from 'element-plus'
 import type { Operation } from '../api'
 import { domains, isWildcardHostname, panelLoginURL, type Binding } from '../domain-api'
 import { projects, type Project, type ProjectBindingTarget, type ProjectRuntimePorts } from '../projects-api'
+import { programs, type Program, type ProgramRuntime } from '../programs-api'
 import { sites, type Site } from '../sites-api'
 import { errorText } from '../format'
 import AcmeAccountSelect from './AcmeAccountSelect.vue'
 export type BindPreset = { id: string; name: string } & (
-  { kind: 'project'; customPorts?: number[] } | { kind: 'site' }
+  { kind: 'project'; customPorts?: number[] } | { kind: 'site' } | { kind: 'program'; address?: string; port?: number }
 )
 export interface BindResult { operation: Operation | null; accessURL: string; domain: string }
 interface PortOption { value: string; label: string; target: ProjectBindingTarget }
@@ -20,17 +21,25 @@ const emit = defineEmits<{ done: [result: BindResult] }>()
 const form = reactive({ target: '', domain: '', port: '', scheme: 'http', auto_certificate: false, accountId: '' })
 const formId = useId()
 const domainHintId = useId()
+const portHintId = useId()
 const formRef = ref<FormInstance>()
 const projectList = ref<Project[]>([])
 const siteList = ref<Site[]>([])
+const programList = ref<Program[]>([])
 const runtime = ref<ProjectRuntimePorts>()
+const programRuntime = ref<ProgramRuntime>()
 const scanning = ref(false)
 const scanError = ref('')
 const saving = ref(false)
 const error = ref('')
 const kind = computed(() => props.binding?.kind ?? form.target.split(':')[0])
 const editingProject = computed(() => props.binding?.kind === 'project' ? props.binding : null)
-const targetId = computed(() => editingProject.value?.resource_id ?? form.target.split(':')[1] ?? '')
+const editingProgram = computed(() => props.binding?.kind === 'program' ? props.binding : null)
+const editingProxy = computed(() => editingProject.value ?? editingProgram.value)
+const targetId = computed(() => editingProxy.value?.resource_id ?? form.target.split(':')[1] ?? '')
+const programPorts = computed(() => (programRuntime.value?.ports ?? []).map(({ address, port }) => ({
+  address, port, endpoint: `${address.includes(':') ? `[${address}]` : address}:${port}`,
+})))
 const portGroups = computed(() => {
   const published: PortOption[] = []
   const listeners: PortOption[] = []
@@ -80,7 +89,7 @@ watch(open, async (value, _, onCleanup) => {
   error.value = ''
   Object.assign(form, {
     target: '', domain: props.binding?.domain ?? '',
-    scheme: editingProject.value?.upstream.toLowerCase().startsWith('https://') ? 'https' : 'http',
+    scheme: editingProxy.value?.upstream.toLowerCase().startsWith('https://') ? 'https' : 'http',
     auto_certificate: props.binding?.auto_certificate ?? false, accountId: '',
   })
   formRef.value?.clearValidate()
@@ -90,28 +99,45 @@ watch(open, async (value, _, onCleanup) => {
   onCleanup(() => { active = false })
   projectList.value = []
   siteList.value = []
+  programList.value = []
   try {
-    const [availableProjects, availableSites] = await Promise.all([projects.list(), sites.list()])
+    const [availableProjects, availableSites, availablePrograms] = await Promise.all([projects.list(), sites.list(), programs.list()])
     if (!active) return
     projectList.value = availableProjects
     siteList.value = availableSites
-    form.target = projectList.value[0] ? `project:${projectList.value[0].id}` : siteList.value[0] ? `site:${siteList.value[0].id}` : 'panel'
-  } catch (e) { if (active) error.value = errorText(e, '读取项目和网站失败') }
+    programList.value = availablePrograms.programs
+    form.target = projectList.value[0] ? `project:${projectList.value[0].id}`
+      : siteList.value[0] ? `site:${siteList.value[0].id}`
+        : programList.value[0] ? `program:${programList.value[0].id}` : 'panel'
+  } catch (e) { if (active) error.value = errorText(e, '读取域名指向列表失败') }
 })
 watch(requestsCertificate, value => { if (!value) form.accountId = '' })
-watch([open, kind, targetId], async ([isOpen, targetKind, projectId], _, onCleanup) => {
-  form.port = editingProject.value ? currentPort : ''
+watch([open, kind, targetId], async ([isOpen, targetKind, id], _, onCleanup) => {
+  form.port = editingProxy.value ? currentPort : ''
   runtime.value = undefined
+  programRuntime.value = undefined
   scanError.value = ''
   scanning.value = false
-  if (!isOpen || targetKind !== 'project') return
+  if (!isOpen || (targetKind !== 'project' && targetKind !== 'program')) return
 
   let active = true
   onCleanup(() => { active = false })
   scanning.value = true
   try {
-    const result = await projects.runtimePorts(projectId)
-    if (active) runtime.value = result
+    if (targetKind === 'project') {
+      const result = await projects.runtimePorts(id)
+      if (active) runtime.value = result
+    } else {
+      const result = await programs.runtime(id)
+      if (!active) return
+      programRuntime.value = result
+      const preset = props.preset
+      if (preset?.kind === 'program' && preset.port) {
+        const matches = programPorts.value.filter(p => p.port === preset.port && (!preset.address || p.address === preset.address))
+        if (matches.length === 1) form.port = matches[0].endpoint
+        else if (!matches.length && result.ports.length) scanError.value = '程序当前未监听原选端口，请重新选择。'
+      }
+    }
   } catch (e) {
     if (active) scanError.value = errorText(e, '读取服务端口失败')
   } finally {
@@ -133,6 +159,16 @@ async function submit() {
       operation = (await projects.updateBinding(targetId.value, editingProject.value.id, {
         domain, scheme: form.scheme, ...certOptions, ...port,
       })).operation
+    } else if (kind.value === 'program') {
+      const port = form.port === currentPort
+        ? editingProgram.value?.upstream.split('://')[1]
+        : programPorts.value.find(p => p.endpoint === form.port)?.endpoint
+      if (!port) return
+      const result = await domains.save({
+        kind: 'program', id: editingProgram.value?.id, resource_id: targetId.value,
+        domain, upstream: `${form.scheme}://${port}`, ...certOptions,
+      })
+      operation = result.operation
     } else if (props.binding) {
       const result = await domains.save({ ...props.binding, domain, ...certOptions })
       operation = result.operation
@@ -160,8 +196,9 @@ async function submit() {
         <span :id="domainHintId" class="hint">请先将域名解析到本服务器。<template v-if="wildcardSite">通配符主机名仅支持 HTTP。</template></span>
       </el-form-item>
       <el-form-item v-if="choosing" label="指向" prop="target">
-        <el-select v-model="form.target" placeholder="选择项目、网站或面板">
+        <el-select v-model="form.target" placeholder="选择项目、程序、网站或面板">
           <el-option-group v-if="projectList.length" label="编排项目"><el-option v-for="p in projectList" :key="p.id" :value="`project:${p.id}`" :label="p.name"/></el-option-group>
+          <el-option-group v-if="programList.length" label="程序"><el-option v-for="p in programList" :key="p.id" :value="`program:${p.id}`" :label="p.name"/></el-option-group>
           <el-option-group v-if="siteList.length" label="静态网站"><el-option v-for="s in siteList" :key="s.id" :value="`site:${s.id}`" :label="s.identifier"/></el-option-group>
           <el-option-group label="其他"><el-option value="panel" label="本面板"/></el-option-group>
         </el-select>
@@ -181,8 +218,22 @@ async function submit() {
         <p v-if="scanError || runtime?.warning" class="hint">重新打开此窗口可再次读取运行端口。</p>
         <p v-if="runtime && !runtime.running" class="hint" role="status">项目没有正在运行的容器。</p>
         <p v-else-if="runtime && !runtime.ports.length" class="hint" role="status">没有发现可绑定的运行端口。</p>
-        <el-form-item label="上游协议"><el-radio-group v-model="form.scheme"><el-radio-button value="http">HTTP</el-radio-button><el-radio-button value="https">HTTPS</el-radio-button></el-radio-group></el-form-item>
       </template>
+      <template v-if="kind === 'program'">
+        <el-form-item label="监听端口" prop="port">
+          <el-select v-model="form.port" placeholder="选择监听端口" :aria-describedby="portHintId">
+            <el-option v-if="editingProgram" :value="currentPort" label="保留当前端口"/>
+            <el-option v-for="port in programPorts" :key="port.endpoint" :value="port.endpoint" :label="port.endpoint"/>
+          </el-select>
+          <div :id="portHintId" class="hint">
+            <span v-if="editingProgram">当前上游 {{ editingProgram.upstream }} </span>
+            <span v-if="scanning" role="status">正在读取运行端口…</span>
+            <span v-else-if="scanError" role="status">{{ scanError }}</span>
+            <span v-else-if="programRuntime && !programPorts.length" role="status">{{ programRuntime.message || '没有发现监听端口，请确认程序已启动并监听 TCP 端口。' }}</span>
+          </div>
+        </el-form-item>
+      </template>
+      <el-form-item v-if="kind === 'project' || kind === 'program'" label="上游协议"><el-radio-group v-model="form.scheme"><el-radio-button value="http">HTTP</el-radio-button><el-radio-button value="https">HTTPS</el-radio-button></el-radio-group></el-form-item>
       <el-checkbox v-if="!wildcardSite" v-model="form.auto_certificate" name="auto_certificate">自动申请 HTTPS 证书</el-checkbox>
       <AcmeAccountSelect v-if="open && requestsCertificate" v-model="form.accountId"/>
       <p v-if="requestsCertificate" class="hint">申请证书需要公网 80 端口可达。</p>

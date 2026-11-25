@@ -29,7 +29,7 @@ func TestProjectImportProxyUpgrade(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := a.refreshProjectImportProxy(t.Context()); err != nil {
+		if err := a.refreshPanelProxy(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if contents != old && reloads != 0 {
@@ -40,7 +40,17 @@ func TestProjectImportProxyUpgrade(t *testing.T) {
 	if err != nil || !strings.Contains(string(data), "location = /api/v1/projects/import {") {
 		t.Fatalf("旧面板配置未补齐导入规则：%v", err)
 	}
-	if err := a.refreshProjectImportProxy(t.Context()); err != nil || reloads != 1 {
+	if !strings.Contains(string(data), programLogStreamLocation+" proxy_buffering off;") {
+		t.Fatal("日志跟踪的代理规则应关闭缓冲")
+	}
+	withImport := strings.Replace(string(data), programLogStreamLocation, "location = /legacy {", 1)
+	if err := os.WriteFile(path, []byte(withImport), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.refreshPanelProxy(t.Context()); err != nil || reloads != 2 {
+		t.Fatalf("已有导入规则的面板也应补齐日志跟踪规则：%v，已重载 %d 次", err, reloads)
+	}
+	if err := a.refreshPanelProxy(t.Context()); err != nil || reloads != 2 {
 		t.Fatalf("再次启动时应保留已更新的配置：%v，已重载 %d 次", err, reloads)
 	}
 	if err := os.WriteFile(path, []byte(old), 0644); err != nil {
@@ -49,7 +59,7 @@ func TestProjectImportProxyUpgrade(t *testing.T) {
 	a.NginxProbe = func(context.Context, string, string, string) error {
 		return errors.New("新配置未生效")
 	}
-	if err := a.refreshProjectImportProxy(t.Context()); err == nil {
+	if err := a.refreshPanelProxy(t.Context()); err == nil {
 		t.Fatal("应报告代理配置刷新失败")
 	}
 	if data, err := os.ReadFile(path); err != nil || string(data) != old {
