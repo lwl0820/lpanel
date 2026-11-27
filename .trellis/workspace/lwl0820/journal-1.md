@@ -851,3 +851,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 31: 面板升级自动应用配套操作
+<!-- trellis-session: v=2 fp=262c98fc02377407 -->
+
+**Date**: 2026-11-27
+**Task**: 面板升级自动应用配套操作
+**Branch**: `main`
+
+### Summary
+
+手动和自动升级共用目标版本的配套操作流程，按需刷新托管 Nginx 配置并确认生效，失败时回退。定向 Go 测试、go vet 及真实 Nginx 的 v0.1.24 升级和故障回退验收通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f553934` | feat: 将配套操作纳入面板升级 |
+
+### Status
+
+[OK] **Completed**
