@@ -7,12 +7,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +112,13 @@ func TestUpgradeWorkerSuccessAndRollback(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprint(fail), func(t *testing.T) {
 			a := upgradeTestApp(t)
+			a.Config.NginxConfigDir = filepath.Join(a.Root, "nginx")
+			if err := os.MkdirAll(a.Config.NginxConfigDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(a.Config.NginxConfigDir, "lpanel.conf"), []byte(managedNginxHeader+"server {}\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
 			old := filepath.Join(a.Root, "releases", "v1.0.0")
 			next := filepath.Join(a.Root, "releases", "v1.1.0")
 			for _, dir := range []string{old, next} {
@@ -135,18 +144,132 @@ func TestUpgradeWorkerSuccessAndRollback(t *testing.T) {
 				return nil, nil
 			}
 			_, _ = a.DB.Exec("INSERT INTO operations(id,kind,status,created_at,updated_at) VALUES('test','upgrade','running','','')")
-			err := a.applyUpgrade(context.Background(), "test", next)
+			err := a.applyUpgrade(t.Context(), "test", next)
 			actual, _ := os.Readlink(filepath.Join(a.Root, "current"))
 			var status string
 			_ = a.DB.QueryRow("SELECT status FROM operations WHERE id='test'").Scan(&status)
 			if fail {
-				if err == nil || actual != old || calls != 2 || status != "failed" {
+				// 两次重启之间只停止候选服务，相同的配置不需要重载。
+				if err == nil || actual != old || calls != 3 || status != "failed" {
 					t.Fatalf("回退失败 %v %s %d %s", err, actual, calls, status)
 				}
 			} else if err != nil || actual != next || status != "success" {
 				t.Fatalf("升级失败 %v %s %s", err, actual, status)
 			}
 		})
+	}
+}
+
+func TestUpgradeWorkerRestoresProxyWhenCandidateIsUnhealthy(t *testing.T) {
+	a := domainApp(t)
+	old := filepath.Join(a.Root, "releases", "v1.0.0")
+	next := filepath.Join(a.Root, "releases", "v1.1.0")
+	if err := os.MkdirAll(next, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(next, "lpanel"), []byte("程序"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(a.Root, "current")
+	if err := os.Symlink(old, current); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(a.Config.NginxConfigDir, "lpanel.conf")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	const previous = managedNginxHeader + "server {}\n"
+	if err := os.WriteFile(path, []byte(previous), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DB.Exec("INSERT INTO operations(id,kind,status,created_at,updated_at) VALUES('test','upgrade','running','','')"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		cancel()
+	}))
+	defer server.Close()
+	a.Config.Listen = strings.TrimPrefix(server.URL, "http://")
+	var calls []string
+	a.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if len(calls) == 1 {
+			return nil, os.WriteFile(path, []byte(managedNginxHeader+nginxTemplateRevision+"server {}\n"), 0644)
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("恢复命令应使用独立的上下文：%v", ctx.Err())
+		}
+		if target, err := os.Readlink(current); err != nil || target != old {
+			t.Fatalf("运行恢复命令前应切换到旧版本：%q，%v", target, err)
+		}
+		if name == "nginx" || args[0] != "stop" {
+			if data, err := os.ReadFile(path); err != nil || string(data) != previous {
+				t.Fatalf("检查、重载和启动旧版本前应恢复代理配置：%q，%v", data, err)
+			}
+		}
+		return nil, nil
+	}
+	if err := a.applyUpgrade(ctx, "test", next); !errors.Is(err, context.Canceled) {
+		t.Fatalf("应报告候选版本未通过健康检查的原因：%v", err)
+	}
+	want := []string{"systemctl restart lpanel.service", "systemctl stop lpanel.service", "nginx -t", "systemctl reload nginx", "systemctl restart lpanel.service"}
+	if !slices.Equal(calls, want) {
+		t.Fatalf("恢复步骤错误：%q", calls)
+	}
+	var status, message string
+	if err := a.DB.QueryRow("SELECT status,error FROM operations WHERE id='test'").Scan(&status, &message); err != nil || status != "failed" || !strings.Contains(message, "已恢复上一版程序") {
+		t.Fatalf("应记录升级失败和恢复结果：%q，%q，%v", status, message, err)
+	}
+}
+
+func TestUpgradeRollbackPreservesUnmanagedProxy(t *testing.T) {
+	a := domainApp(t)
+	path := filepath.Join(t.TempDir(), "lpanel.conf")
+	previous := []byte(managedNginxHeader + "server {}\n")
+	a.Command = func(_ context.Context, name string, _ ...string) ([]byte, error) {
+		t.Fatalf("未托管配置不应触发命令：%s", name)
+		return nil, nil
+	}
+	if err := a.restoreUpgradeNginx(t.Context(), path, previous); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("回退不应创建缺失的配置：%v", err)
+	}
+	const custom = "# 管理员自定义配置\n"
+	if err := os.WriteFile(path, []byte(custom), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.restoreUpgradeNginx(t.Context(), path, previous); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != custom {
+		t.Fatalf("回退应保留自定义配置：%q，%v", data, err)
+	}
+}
+
+func TestUpgradeRollbackChecksLoadedProxy(t *testing.T) {
+	a := domainApp(t)
+	config := a.currentConfig()
+	const marker = "0123456789abcdef0123456789abcdef"
+	previous := a.renderNginx([]Binding{{Kind: "panel", Domain: "_"}}, marker, config, "", "$remote_addr", nginxHTTP2Shared)
+	path := filepath.Join(t.TempDir(), "lpanel.conf")
+	if err := os.WriteFile(path, []byte(managedNginxHeader+"server {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("重载后仍在运行候选配置")
+	wantAddress, wantHost := localPanelEndpoint(config, "/.lpanel/config")
+	a.NginxProbe = func(_ context.Context, address, host, gotMarker string) error {
+		if address != wantAddress || host != wantHost || gotMarker != marker {
+			t.Fatalf("恢复后应回读旧版入口和配置标识：%q %q %q", address, host, gotMarker)
+		}
+		return failure
+	}
+	if err := a.restoreUpgradeNginx(t.Context(), path, []byte(previous)); !errors.Is(err, failure) {
+		t.Fatalf("应报告旧配置未生效：%v", err)
 	}
 }
 

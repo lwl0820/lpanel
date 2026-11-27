@@ -196,29 +196,42 @@ func (a *App) setConfig(config Config) {
 	a.configMu.Unlock()
 }
 
-// 旧版升级程序只会重启服务，由新版服务为已有面板入口补齐代理规则。
+// 由目标版本刷新已有配置，兼容只会重启服务并检查健康的旧版升级程序。
 func (a *App) refreshPanelProxy(ctx context.Context) error {
 	path := filepath.Join(a.currentConfig().NginxConfigDir, "lpanel.conf")
-	config, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
+	config, err := readManagedNginxConfig(path)
 	if err != nil {
 		return err
 	}
-	if !bytes.HasPrefix(config, []byte("# 本文件由 LPanel 管理\n")) {
-		return nil
-	}
-	if bytes.Contains(config, []byte("location = /api/v1/projects/import {")) &&
-		bytes.Contains(config, []byte(programLogStreamLocation)) {
+	if config == nil || bytes.HasPrefix(config, []byte(managedNginxHeader+nginxTemplateRevision)) {
 		return nil
 	}
 	return a.ApplyNginx(ctx)
 }
 
-func (a *App) Serve(ctx context.Context) error {
+// 在监听健康接口之前执行目标版本要求的配套操作。
+func (a *App) runUpgradeActions(ctx context.Context) error {
 	if err := a.refreshPanelProxy(ctx); err != nil {
-		log.Printf("更新面板的 Nginx 代理配置失败：%v", err)
+		actionErr := fmt.Errorf("更新面板的 Nginx 代理配置失败：%w", err)
+		var id string
+		queryErr := a.DB.QueryRowContext(ctx, "SELECT id FROM operations WHERE kind='upgrade' AND status='running'").Scan(&id)
+		if queryErr == nil {
+			checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			if _, err := a.Command(checkCtx, "systemctl", "is-active", "--quiet", "lpanel-upgrade-"+id+".service"); err == nil {
+				return actionErr
+			}
+		} else if !errors.Is(queryErr, sql.ErrNoRows) {
+			log.Printf("读取升级任务失败：%v", queryErr)
+		}
+		log.Print(actionErr)
+	}
+	return nil
+}
+
+func (a *App) Serve(ctx context.Context) error {
+	if err := a.runUpgradeActions(ctx); err != nil {
+		return err
 	}
 	if _, err := a.DB.Exec("UPDATE operations SET status='failed',error='服务重启，操作已中断' WHERE status IN ('queued','running') AND kind!='upgrade'"); err != nil {
 		return err

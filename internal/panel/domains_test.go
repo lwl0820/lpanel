@@ -113,7 +113,7 @@ func TestBindingConfigAndRollback(t *testing.T) {
 		}
 	}
 	const upgradeMap = "map $http_upgrade $lpanel_connection_upgrade"
-	const header = "# 本文件由 LPanel 管理\n" + upgradeMap + " {\n    default upgrade;\n    \"\" close;\n}\n"
+	const header = managedNginxHeader + nginxTemplateRevision + upgradeMap + " {\n    default upgrade;\n    \"\" close;\n}\n"
 	if !strings.HasPrefix(string(old), header) || strings.Count(string(old), upgradeMap) != 1 {
 		t.Fatal("配置开头应包含管理标记及唯一的连接升级映射")
 	}

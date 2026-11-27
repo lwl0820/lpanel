@@ -2,16 +2,19 @@ package panel
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -197,6 +200,11 @@ func (a *App) applyUpgrade(ctx context.Context, id, releaseDir string) (result e
 	if err != nil {
 		return fmt.Errorf("读取当前版本失败：%w", err)
 	}
+	nginxPath := filepath.Join(a.currentConfig().NginxConfigDir, "lpanel.conf")
+	previousNginx, err := readManagedNginxConfig(nginxPath)
+	if err != nil {
+		return fmt.Errorf("读取旧版 Nginx 配置失败：%w", err)
+	}
 	if err = a.switchRelease(releaseDir); err != nil {
 		return err
 	}
@@ -206,15 +214,59 @@ func (a *App) applyUpgrade(ctx context.Context, id, releaseDir string) (result e
 	}
 	if restartErr != nil {
 		if err = a.switchRelease(previous); err != nil {
-			return fmt.Errorf("升级失败：%v；恢复旧版本指针失败：%w", restartErr, err)
+			return errors.Join(fmt.Errorf("升级失败：%w", restartErr), fmt.Errorf("恢复旧版本指针失败：%w", err))
 		}
-		if _, err = a.Command(ctx, "systemctl", "restart", "lpanel.service"); err != nil {
-			return fmt.Errorf("升级失败：%v；重启旧版本失败：%w", restartErr, err)
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		var rollbackErr error
+		if previousNginx != nil {
+			// 等待候选服务停止，避免其自动重启时继续更新代理配置。
+			if output, err := a.Command(rollbackCtx, "systemctl", "stop", "lpanel.service"); err != nil {
+				rollbackErr = fmt.Errorf("停止候选版本失败：%s：%w", output, err)
+			} else if err := a.restoreUpgradeNginx(rollbackCtx, nginxPath, previousNginx); err != nil {
+				rollbackErr = fmt.Errorf("恢复旧版 Nginx 配置失败：%w", err)
+			}
+		}
+		if output, err := a.Command(rollbackCtx, "systemctl", "restart", "lpanel.service"); err != nil {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("重启旧版本失败：%s：%w", output, err))
+		}
+		if rollbackErr != nil {
+			return errors.Join(fmt.Errorf("升级失败：%w", restartErr), rollbackErr)
 		}
 		return fmt.Errorf("升级失败，已恢复上一版程序：%w", restartErr)
 	}
 	return nil
 }
+
+// 仅识别面板模板生成的回读规则，兼容没有配置标识的旧模板。
+var upgradeNginxProbeRule = regexp.MustCompile(`(?m)^location = /\.lpanel/config \{ default_type text/plain; (?:if \(\$remote_addr != [^ )]+\) \{ return 404; \} )?return 200 "([0-9a-f]{32})"; \}$`)
+
+func (a *App) restoreUpgradeNginx(ctx context.Context, path string, previous []byte) error {
+	current, err := readManagedNginxConfig(path)
+	if err != nil {
+		return err
+	}
+	if current == nil || bytes.Equal(current, previous) {
+		return nil
+	}
+	if err := os.WriteFile(path, previous, 0644); err != nil {
+		return err
+	}
+	if output, err := a.Command(ctx, "nginx", "-t"); err != nil {
+		return fmt.Errorf("Nginx 配置检查失败：%s：%w", output, err)
+	}
+	if output, err := a.Command(ctx, "systemctl", "reload", "nginx"); err != nil {
+		return fmt.Errorf("Nginx 重载失败：%s：%w", output, err)
+	}
+	if match := upgradeNginxProbeRule.FindSubmatch(previous); match != nil {
+		address, host := localPanelEndpoint(a.currentConfig(), "/.lpanel/config")
+		if err := a.NginxProbe(ctx, address, host, string(match[1])); err != nil {
+			return fmt.Errorf("旧版 Nginx 配置未确认生效：%w", err)
+		}
+	}
+	return nil
+}
+
 func (a *App) switchRelease(target string) error {
 	candidate := filepath.Join(a.Root, ".tmp", "current-next")
 	_ = os.Remove(candidate)

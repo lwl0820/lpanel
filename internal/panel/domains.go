@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -481,10 +482,29 @@ func (a *App) nginxCapabilities(ctx context.Context) (clientAddr string, http2Mo
 	return clientAddr, nginxHTTP2Shared
 }
 
+const (
+	managedNginxHeader    = "# 本文件由 LPanel 管理\n"
+	nginxTemplateRevision = "# LPanel Nginx 配置模板修订号：1\n"
+)
+
+func readManagedNginxConfig(path string) ([]byte, error) {
+	config, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.HasPrefix(config, []byte(managedNginxHeader)) {
+		return nil, nil
+	}
+	return config, nil
+}
+
 func (a *App) renderNginx(items []Binding, marker string, config Config, challengeHost, clientAddr string, http2Mode nginxHTTP2Mode) string {
 	var out strings.Builder
-	out.WriteString(`# 本文件由 LPanel 管理
-map $http_upgrade $lpanel_connection_upgrade {
+	out.WriteString(managedNginxHeader + nginxTemplateRevision)
+	out.WriteString(`map $http_upgrade $lpanel_connection_upgrade {
     default upgrade;
     "" close;
 }
@@ -681,8 +701,7 @@ func (a *App) applyNginxBindings(ctx context.Context, config Config, items []Bin
 		return nil
 	}
 	if output, e := a.Command(ctx, "nginx", "-t"); e != nil {
-		_ = restore()
-		return fmt.Errorf("Nginx 配置检查失败：%s：%w", output, e)
+		return errors.Join(fmt.Errorf("Nginx 配置检查失败：%s：%w", output, e), restore())
 	}
 	if output, e := a.Command(ctx, "systemctl", "reload", "nginx"); e != nil {
 		return errors.Join(fmt.Errorf("Nginx 重载失败：%s：%w", output, e), rollback())

@@ -105,9 +105,9 @@ sudo systemctl restart lpanel.service
 
 安装时填写的绑定域名使用普通域名。请提前将域名解析到服务器，并开放公网 80 端口和实际面板端口。业务网站还使用标准 80/443，静态网站支持通过 HTTP 访问通配符主机名。为公网 IP 开启 HTTPS 请使用终端管理命令。[终端管理说明](#在服务器终端管理面板)
 
-编排项目绑定域名后，应用可通过 `X-Real-IP` 或 `X-Forwarded-For` 读取 Nginx 识别的客户端地址，同一域名也支持 WebSocket。前面有 CDN 或其他代理时，要让应用看到访客地址，需先在 Nginx 中配置可信代理来源。旧版升级后，运行 `sudo /opt/lpanel/current/lpanel setup-nginx --root /opt/lpanel` 可将这些规则应用到已有域名绑定。
+编排项目绑定域名后，应用可通过 `X-Real-IP` 或 `X-Forwarded-For` 读取 Nginx 识别的客户端地址，同一域名也支持 WebSocket。前面有 CDN 或其他代理时，要让应用看到访客地址，需先在 Nginx 中配置可信代理来源。
 
-编排项目和宿主机程序的域名绑定默认开启 HTTP/2，在 HTTPS 证书启用后生效。Nginx 1.25.1 或更高版本支持在绑定弹窗中为单个域名关闭。较旧且支持 HTTP/2 的 Nginx 会在共享的 HTTPS 端口上启用 HTTP/2。已有绑定可运行上面的 `setup-nginx` 命令应用设置，无需重新申请证书。
+编排项目和宿主机程序的域名绑定默认开启 HTTP/2，在 HTTPS 证书启用后生效。Nginx 1.25.1 或更高版本支持在绑定弹窗中为单个域名关闭。较旧且支持 HTTP/2 的 Nginx 会在共享的 HTTPS 端口上启用 HTTP/2。升级会为已有绑定应用设置并沿用原证书。
 
 未申请证书时，地址为 `http://服务器地址:面板端口`；绑定域名且证书签发成功后，地址为 `https://面板域名:面板端口`。首次签发失败保留 HTTP 并输出服务器 IP 地址入口，脚本显示失败原因，安装结束不声称 HTTPS 已启用；修正网络或解析后可在面板中重试。
 
@@ -146,7 +146,9 @@ sudo systemctl status lpanel-renew.timer
 
 在面板的更新页面可以手动检查和安装新版本，也可以开启“自动更新”。此开关默认关闭，开启后从下一次后台检查起自动安装适用于本机的较新正式版。面板服务启动时检查一次，之后每 24 小时检查一次，关闭浏览器也会执行。发行版切换使用 `current` 指针，持久化配置与数据库位于独立的 `data/` 中，不随程序覆盖。
 
-若从旧版升级后，上传文件或导入编排项目 ZIP 时提示超过 1 MiB，可运行 `sudo /opt/lpanel/current/lpanel setup-nginx --root /opt/lpanel` 重新生成面板的 Nginx 配置，再重试上传。若面板前另有反向代理，也要检查该代理的上传限制。
+升级会按需更新 LPanel 托管的 Nginx 配置，检查通过、重载并确认配置生效后才完成。更新配置失败时，面板恢复上一版，升级结果可在更新页面查看。详细错误可通过 `sudo journalctl -u lpanel.service -n 100` 查阅。
+
+排障时可运行 `sudo /opt/lpanel/current/lpanel setup-nginx --root /opt/lpanel` 重新生成托管配置。若上传文件或导入编排项目 ZIP 仍提示超过 1 MiB，且面板前另有反向代理，请检查该代理的上传限制。
 
 ### 管理本机防火墙
 
@@ -154,7 +156,7 @@ sudo systemctl status lpanel-renew.timer
 
 面板不会安装、替换或自动启用防火墙。服务器没有其他防火墙管理程序、且你决定使用 UFW 时，可在 Debian 或 Ubuntu 终端运行 `sudo apt install ufw`，随后回到面板刷新。已经使用其他工具管理规则的服务器，请继续使用原工具。
 
-从旧版升级后，先运行 `sudo /opt/lpanel/current/lpanel setup-nginx --root /opt/lpanel` 更新代理配置。启用时会按当前面板端口检查入站规则；已有来源限制不会自动扩大，遇到无法确认的规则会保留停用状态。面板前另有代理时，以实际连接到本机的代理地址为准。
+启用时会按当前面板端口检查入站规则。已有来源限制不会自动扩大，遇到无法确认的规则会保留停用状态。面板前另有代理时，以实际连接到本机的代理地址为准。
 
 ### 管理交换空间
 
