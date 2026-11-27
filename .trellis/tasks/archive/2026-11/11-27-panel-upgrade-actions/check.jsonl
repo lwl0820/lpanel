@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/hosting-contract.md","reason":"复核升级配套操作和已有托管入口的兼容性"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核对相关 Go 测试与真实系统验收要求"}
