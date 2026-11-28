@@ -44,6 +44,10 @@ func (a *App) saveLoginPath(w http.ResponseWriter, r *http.Request) {
 func (a *App) servePanel(w http.ResponseWriter, r *http.Request) {
 	loginPath := a.currentConfig().LoginPath
 	path := r.URL.EscapedPath()
+	if path == mcpPath {
+		a.serveMCP(w, r)
+		return
+	}
 	if loginPath == "" || path == "/api/v1/health" && r.Header.Get("X-LPanel-Proxy") == "" {
 		a.Mux.ServeHTTP(w, r)
 		return

@@ -151,35 +151,7 @@ func (a *App) RegisterProjectRoutes() error {
 	if err := a.migrateProjects(); err != nil {
 		return err
 	}
-	a.Mux.Handle("GET /api/v1/projects", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rows, err := a.DB.QueryContext(r.Context(), "SELECT id,name,directory,legacy_directory,updated_at,custom_ports FROM projects ORDER BY name")
-		if err != nil {
-			WriteError(w, 500, "project_error", "读取项目失败")
-			return
-		}
-		defer rows.Close()
-		items := []Project{}
-		for rows.Next() {
-			var p Project
-			var directory string
-			var customPorts []byte
-			if err = rows.Scan(&p.ID, &p.Name, &directory, &p.LegacyDirectory, &p.UpdatedAt, &customPorts); err != nil {
-				WriteError(w, 500, "project_error", "读取项目失败")
-				return
-			}
-			if err = jsonv2.Unmarshal(customPorts, &p.CustomPorts); err != nil {
-				WriteError(w, 500, "project_error", "读取项目失败")
-				return
-			}
-			p.Directory = a.projectDirectory(directory)
-			items = append(items, p)
-		}
-		if err = rows.Err(); err != nil {
-			WriteError(w, 500, "project_error", "读取项目失败")
-			return
-		}
-		WriteJSON(w, 200, items)
-	})))
+	a.Mux.Handle("GET /api/v1/projects", a.RequireAuth(http.HandlerFunc(a.listProjects)))
 	a.Mux.Handle("GET /api/v1/projects/{id}/runtime-ports", a.RequireAuth(http.HandlerFunc(a.projectRuntimePorts)))
 	a.Mux.Handle("GET /api/v1/projects/{id}", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := a.project(r.Context(), r.PathValue("id"))
@@ -250,19 +222,7 @@ func (a *App) RegisterProjectRoutes() error {
 		}
 		WriteJSON(w, 202, op)
 	})))
-	a.Mux.Handle("GET /api/v1/projects/{id}/status", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, err := a.project(r.Context(), r.PathValue("id"))
-		if err != nil {
-			WriteError(w, 404, "not_found", "项目不存在")
-			return
-		}
-		items, err := a.ProjectStatus(r.Context(), p)
-		if err != nil {
-			WriteError(w, 502, "docker_error", err.Error())
-			return
-		}
-		WriteJSON(w, 200, items)
-	})))
+	a.Mux.Handle("GET /api/v1/projects/{id}/status", a.RequireAuth(http.HandlerFunc(a.projectStatus)))
 	a.Mux.Handle("GET /api/v1/projects/{id}/logs", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := a.project(r.Context(), r.PathValue("id"))
 		if err != nil {
@@ -1287,4 +1247,48 @@ func (a *App) bindProject(w http.ResponseWriter, r *http.Request) {
 		operation = &op
 	}
 	WriteJSON(w, 200, map[string]any{"binding": b, "operation": operation, "access_url": a.BindingURL(b)})
+}
+
+func (a *App) listProjects(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.DB.QueryContext(r.Context(), "SELECT id,name,directory,legacy_directory,updated_at,custom_ports FROM projects ORDER BY name")
+	if err != nil {
+		WriteError(w, 500, "project_error", "读取项目失败")
+		return
+	}
+	defer rows.Close()
+	items := []Project{}
+	for rows.Next() {
+		var p Project
+		var directory string
+		var customPorts []byte
+		if err = rows.Scan(&p.ID, &p.Name, &directory, &p.LegacyDirectory, &p.UpdatedAt, &customPorts); err != nil {
+			WriteError(w, 500, "project_error", "读取项目失败")
+			return
+		}
+		if err = jsonv2.Unmarshal(customPorts, &p.CustomPorts); err != nil {
+			WriteError(w, 500, "project_error", "读取项目失败")
+			return
+		}
+		p.Directory = a.projectDirectory(directory)
+		items = append(items, p)
+	}
+	if err = rows.Err(); err != nil {
+		WriteError(w, 500, "project_error", "读取项目失败")
+		return
+	}
+	WriteJSON(w, 200, items)
+}
+
+func (a *App) projectStatus(w http.ResponseWriter, r *http.Request) {
+	p, err := a.project(r.Context(), r.PathValue("id"))
+	if err != nil {
+		WriteError(w, 404, "not_found", "项目不存在")
+		return
+	}
+	items, err := a.ProjectStatus(r.Context(), p)
+	if err != nil {
+		WriteError(w, 502, "docker_error", err.Error())
+		return
+	}
+	WriteJSON(w, 200, items)
 }

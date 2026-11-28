@@ -162,6 +162,10 @@ func Open(root, version string) (*App, error) {
 		return nil, err
 	}
 	a.registerMonitorLive()
+	if err := a.registerMCPAccess(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	a.Mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := a.DB.PingContext(r.Context()); err != nil {
 			WriteError(w, 503, "database_unavailable", "数据库不可用")

@@ -42,11 +42,16 @@ func (a *App) StartOperation(kind string, run func(context.Context) (string, err
 	return op, nil
 }
 func (a *App) operation(w http.ResponseWriter, r *http.Request) {
-	var op Operation
-	err := a.DB.QueryRowContext(r.Context(), "SELECT id,kind,status,log,error,created_at,updated_at FROM operations WHERE id=?", r.PathValue("id")).Scan(&op.ID, &op.Kind, &op.Status, &op.Log, &op.Error, &op.CreatedAt, &op.UpdatedAt)
+	op, err := a.loadOperation(r.Context(), r.PathValue("id"))
 	if err != nil {
 		WriteError(w, 404, "not_found", "操作记录不存在")
 		return
 	}
 	WriteJSON(w, 200, op)
+}
+
+func (a *App) loadOperation(ctx context.Context, id string) (Operation, error) {
+	var op Operation
+	err := a.DB.QueryRowContext(ctx, "SELECT id,kind,status,log,error,created_at,updated_at FROM operations WHERE id=?", id).Scan(&op.ID, &op.Kind, &op.Status, &op.Log, &op.Error, &op.CreatedAt, &op.UpdatedAt)
+	return op, err
 }

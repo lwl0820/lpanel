@@ -53,8 +53,11 @@ func TestPanelProxyTemplateUpgrade(t *testing.T) {
 	if !strings.Contains(string(data), programLogStreamLocation+" proxy_buffering off;") {
 		t.Fatal("日志跟踪的代理规则应关闭缓冲")
 	}
-	withoutRevision := strings.Replace(string(data), nginxTemplateRevision, "", 1)
-	if err := os.WriteFile(path, []byte(withoutRevision), 0644); err != nil {
+	if !strings.Contains(string(data), "location = "+mcpPath+" { client_max_body_size 7m; proxy_pass http://"+a.Config.Listen+"; proxy_set_header Host $http_host;") {
+		t.Fatal("MCP 文本编辑须经过面板代理，并保留客户端访问端口")
+	}
+	previousRevision := strings.Replace(string(data), nginxTemplateRevision, "# LPanel Nginx 配置模板修订号：1\n", 1)
+	if err := os.WriteFile(path, []byte(previousRevision), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.refreshPanelProxy(t.Context()); err != nil || reloads != 2 {

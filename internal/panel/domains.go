@@ -88,14 +88,7 @@ func (a *App) registerDomains() error {
 	if err := a.registerACMEAccounts(); err != nil {
 		return err
 	}
-	a.Mux.Handle("GET /api/v1/bindings", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		items, err := a.ListBindings(r.Context())
-		if err != nil {
-			WriteError(w, 500, "bindings_error", err.Error())
-			return
-		}
-		WriteJSON(w, 200, items)
-	})))
+	a.Mux.Handle("GET /api/v1/bindings", a.RequireAuth(http.HandlerFunc(a.listBindings)))
 	a.Mux.Handle("GET /api/v1/bindings/http2", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, mode := a.nginxCapabilities(r.Context())
 		WriteJSON(w, 200, map[string]nginxHTTP2Mode{"mode": mode})
@@ -113,19 +106,7 @@ func (a *App) registerDomains() error {
 			WriteError(w, 400, "binding_error", err.Error())
 			return
 		}
-		var op *Operation
-		if saved.AutoCertificate && saved.CertificateStatus != "enabled" {
-			job, e := a.StartOperation("certificate", func(ctx context.Context) (string, error) {
-				err := a.RequestCertificateWithAccount(ctx, saved.ID, input.ACMEAccountID)
-				return "证书申请流程结束", err
-			})
-			if e != nil {
-				WriteError(w, 500, "operation_error", e.Error())
-				return
-			}
-			op = &job
-		}
-		WriteJSON(w, 200, map[string]any{"binding": saved, "operation": op, "access_url": a.BindingURL(saved)})
+		a.writeSavedBinding(w, saved, input.ACMEAccountID)
 	})))
 	a.Mux.Handle("DELETE /api/v1/bindings/{id}", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := a.DeleteBinding(r.Context(), r.PathValue("id")); err != nil {
@@ -134,33 +115,7 @@ func (a *App) registerDomains() error {
 		}
 		WriteJSON(w, 200, map[string]bool{"ok": true})
 	})))
-	a.Mux.Handle("POST /api/v1/bindings/{id}/certificate", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		b, err := a.binding(r.Context(), id)
-		if err != nil {
-			WriteError(w, 404, "not_found", "域名绑定不存在")
-			return
-		}
-		if strings.HasPrefix(b.Domain, "*.") {
-			WriteError(w, 400, "binding_error", errWildcardCertificate.Error())
-			return
-		}
-		var input struct {
-			ACMEAccountID string `json:"acme_account_id"`
-		}
-		if r.ContentLength != 0 && !ReadJSON(w, r, &input) {
-			return
-		}
-		op, err := a.StartOperation("certificate", func(ctx context.Context) (string, error) {
-			err := a.RequestCertificateWithAccount(ctx, id, input.ACMEAccountID)
-			return "证书申请流程结束", err
-		})
-		if err != nil {
-			WriteError(w, 500, "operation_error", err.Error())
-			return
-		}
-		WriteJSON(w, 202, op)
-	})))
+	a.Mux.Handle("POST /api/v1/bindings/{id}/certificate", a.RequireAuth(http.HandlerFunc(a.handleRequestCertificate)))
 	a.Mux.Handle("GET /api/v1/system/access", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { WriteJSON(w, 200, a.currentConfig()) })))
 	a.Mux.Handle("PUT /api/v1/system/access/login-path", a.RequireAuth(http.HandlerFunc(a.saveLoginPath)))
 	a.Mux.Handle("PUT /api/v1/system/access", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -410,10 +365,15 @@ func (a *App) DeleteBinding(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("域名绑定不存在")
 	}
-	if _, err = a.DB.ExecContext(ctx, "DELETE FROM bindings WHERE id=?", id); err != nil {
+	return a.deleteBindingLocked(ctx, old)
+}
+
+func (a *App) deleteBindingLocked(ctx context.Context, old Binding) error {
+	if _, err := a.DB.ExecContext(ctx, "DELETE FROM bindings WHERE id=?", old.ID); err != nil {
 		return err
 	}
-	if err = a.applyNginx(ctx); err != nil {
+	err := a.applyNginx(ctx)
+	if err != nil {
 		rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = a.storeBinding(rollbackCtx, old)
@@ -484,7 +444,7 @@ func (a *App) nginxCapabilities(ctx context.Context) (clientAddr string, http2Mo
 
 const (
 	managedNginxHeader    = "# 本文件由 LPanel 管理\n"
-	nginxTemplateRevision = "# LPanel Nginx 配置模板修订号：1\n"
+	nginxTemplateRevision = "# LPanel Nginx 配置模板修订号：2\n"
 )
 
 func readManagedNginxConfig(path string) ([]byte, error) {
@@ -580,6 +540,8 @@ func (a *App) renderNginx(items []Binding, marker string, config Config, challen
 		out.WriteString(acme)
 		switch b.Kind {
 		case "panel":
+			// 同源校验需要外部端口；正文上限与文本文件管理一致。
+			fmt.Fprintf(&out, "location = %s { client_max_body_size 7m; proxy_pass http://%s; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-LPanel-Proxy 1; proxy_set_header X-LPanel-Redirect \"\"; }\n", mcpPath, config.Listen)
 			// 只有启用操作消费实际入口地址。老代理一律覆盖 Host 为不带端口的 $host。
 			fmt.Fprintf(&out, "location = %s/enable { proxy_pass http://%s; proxy_set_header Host $host:$server_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-LPanel-Proxy 2; proxy_set_header X-LPanel-Client-IP %s; proxy_set_header X-LPanel-Server-IP $server_addr; proxy_set_header X-LPanel-Redirect \"\"; }\n", firewallAPI, config.Listen, clientAddr)
 			// 上传交给已鉴权的后端流式读取，避免代理先把整个文件写入临时目录。
@@ -942,4 +904,57 @@ func probeNginx(ctx context.Context, address, host, marker string) error {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+func (a *App) listBindings(w http.ResponseWriter, r *http.Request) {
+	items, err := a.ListBindings(r.Context())
+	if err != nil {
+		WriteError(w, 500, "bindings_error", err.Error())
+		return
+	}
+	WriteJSON(w, 200, items)
+}
+
+func (a *App) handleRequestCertificate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	b, err := a.binding(r.Context(), id)
+	if err != nil {
+		WriteError(w, 404, "not_found", "域名绑定不存在")
+		return
+	}
+	if strings.HasPrefix(b.Domain, "*.") {
+		WriteError(w, 400, "binding_error", errWildcardCertificate.Error())
+		return
+	}
+	var input struct {
+		ACMEAccountID string `json:"acme_account_id"`
+	}
+	if r.ContentLength != 0 && !ReadJSON(w, r, &input) {
+		return
+	}
+	op, err := a.StartOperation("certificate", func(ctx context.Context) (string, error) {
+		err := a.RequestCertificateWithAccount(ctx, id, input.ACMEAccountID)
+		return "证书申请流程结束", err
+	})
+	if err != nil {
+		WriteError(w, 500, "operation_error", err.Error())
+		return
+	}
+	WriteJSON(w, 202, op)
+}
+
+func (a *App) writeSavedBinding(w http.ResponseWriter, saved Binding, accountID string) {
+	var op *Operation
+	if saved.AutoCertificate && saved.CertificateStatus != "enabled" {
+		job, e := a.StartOperation("certificate", func(ctx context.Context) (string, error) {
+			err := a.RequestCertificateWithAccount(ctx, saved.ID, accountID)
+			return "证书申请流程结束", err
+		})
+		if e != nil {
+			WriteError(w, 500, "operation_error", e.Error())
+			return
+		}
+		op = &job
+	}
+	WriteJSON(w, 200, map[string]any{"binding": saved, "operation": op, "access_url": a.BindingURL(saved)})
 }

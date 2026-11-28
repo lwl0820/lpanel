@@ -450,8 +450,11 @@ td.actions .row-act { display: inline-flex; gap: 4px; align-items: center; }
 .swap-table td { white-space: nowrap; }
 .swap-table td.actions .row-act { justify-content: flex-end; }
 .swap-cell-label { display: none; }
-.swap-dialog { inline-size: min(520px, calc(100vw - 32px)); padding: 0; margin: auto; color: var(--fg); overflow: auto; }
-.swap-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.swap-dialog, .mcp-revoke-dialog { inline-size: min(520px, calc(100vw - 32px)); padding: 0; margin: auto; color: var(--fg); overflow: auto; }
+.swap-dialog::backdrop, .mcp-revoke-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.mcp-revoke-dialog:modal { overscroll-behavior: contain; }
+.mcp-revoke-dialog::backdrop { overflow: hidden; overscroll-behavior: contain; }
+.mcp-tokens .first, .mcp-revoke-dialog p { overflow-wrap: anywhere; }
 .swap-dialog .panel-b { display: grid; gap: 8px; }
 .swap-capacity { display: grid; gap: 6px; }
 

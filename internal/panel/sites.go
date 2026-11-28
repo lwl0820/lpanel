@@ -120,63 +120,11 @@ func (a *App) RegisterSiteRoutes() error {
 	if err := a.migrateSites(); err != nil {
 		return err
 	}
-	a.Mux.Handle("GET /api/v1/sites", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rows, err := a.DB.QueryContext(r.Context(), "SELECT "+siteColumns+" FROM sites ORDER BY name")
-		if err != nil {
-			WriteError(w, 500, "site_error", "读取网站失败")
-			return
-		}
-		defer rows.Close()
-		items := []Site{}
-		for rows.Next() {
-			var s Site
-			if err = rows.Scan(&s.ID, &s.Identifier, &s.Directory, &s.SPA, &s.Note, &s.UpdatedAt); err != nil {
-				WriteError(w, 500, "site_error", "读取网站失败")
-				return
-			}
-			items = append(items, s)
-		}
-		if err = rows.Err(); err != nil {
-			WriteError(w, 500, "site_error", "读取网站失败")
-			return
-		}
-		WriteJSON(w, 200, items)
-	})))
+	a.Mux.Handle("GET /api/v1/sites", a.RequireAuth(http.HandlerFunc(a.listSites)))
 	a.Mux.Handle("POST /api/v1/sites", a.RequireAuth(http.HandlerFunc(a.handleCreateSite)))
 	a.Mux.Handle("PUT /api/v1/sites/{id}", a.RequireAuth(http.HandlerFunc(a.handleUpdateSite)))
-	a.Mux.Handle("DELETE /api/v1/sites/{id}", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := a.site(r.Context(), r.PathValue("id")); err != nil {
-			WriteError(w, 404, "not_found", "网站不存在")
-			return
-		}
-		if err := a.DeleteSite(r.Context(), r.PathValue("id")); err != nil {
-			WriteError(w, 500, "site_error", err.Error())
-			return
-		}
-		WriteJSON(w, 200, map[string]bool{"ok": true})
-	})))
-	a.Mux.Handle("POST /api/v1/sites/{id}/bindings", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s, err := a.site(r.Context(), r.PathValue("id"))
-		if err != nil {
-			WriteError(w, 404, "not_found", "网站不存在")
-			return
-		}
-		var input siteBindingInput
-		if !ReadJSON(w, r, &input) {
-			return
-		}
-		b, err := a.SaveBindingWithAccount(r.Context(), s.domainBinding(input), input.ACMEAccountID)
-		if err != nil {
-			WriteError(w, 400, "binding_error", err.Error())
-			return
-		}
-		operation, err := a.startSiteCertificate([]Binding{b}, input.ACMEAccountID)
-		if err != nil {
-			WriteError(w, 500, "operation_error", err.Error())
-			return
-		}
-		WriteJSON(w, 201, map[string]any{"binding": b, "operation": operation, "access_url": a.BindingURL(b)})
-	})))
+	a.Mux.Handle("DELETE /api/v1/sites/{id}", a.RequireAuth(http.HandlerFunc(a.handleDeleteSite)))
+	a.Mux.Handle("POST /api/v1/sites/{id}/bindings", a.RequireAuth(http.HandlerFunc(a.handleCreateSiteBinding)))
 	return nil
 }
 
@@ -503,4 +451,62 @@ func (a *App) DeleteSite(ctx context.Context, id string) error {
 		}
 	}
 	return err
+}
+
+func (a *App) listSites(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.DB.QueryContext(r.Context(), "SELECT "+siteColumns+" FROM sites ORDER BY name")
+	if err != nil {
+		WriteError(w, 500, "site_error", "读取网站失败")
+		return
+	}
+	defer rows.Close()
+	items := []Site{}
+	for rows.Next() {
+		var s Site
+		if err = rows.Scan(&s.ID, &s.Identifier, &s.Directory, &s.SPA, &s.Note, &s.UpdatedAt); err != nil {
+			WriteError(w, 500, "site_error", "读取网站失败")
+			return
+		}
+		items = append(items, s)
+	}
+	if err = rows.Err(); err != nil {
+		WriteError(w, 500, "site_error", "读取网站失败")
+		return
+	}
+	WriteJSON(w, 200, items)
+}
+
+func (a *App) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
+	if _, err := a.site(r.Context(), r.PathValue("id")); err != nil {
+		WriteError(w, 404, "not_found", "网站不存在")
+		return
+	}
+	if err := a.DeleteSite(r.Context(), r.PathValue("id")); err != nil {
+		WriteError(w, 500, "site_error", err.Error())
+		return
+	}
+	WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (a *App) handleCreateSiteBinding(w http.ResponseWriter, r *http.Request) {
+	s, err := a.site(r.Context(), r.PathValue("id"))
+	if err != nil {
+		WriteError(w, 404, "not_found", "网站不存在")
+		return
+	}
+	var input siteBindingInput
+	if !ReadJSON(w, r, &input) {
+		return
+	}
+	b, err := a.SaveBindingWithAccount(r.Context(), s.domainBinding(input), input.ACMEAccountID)
+	if err != nil {
+		WriteError(w, 400, "binding_error", err.Error())
+		return
+	}
+	operation, err := a.startSiteCertificate([]Binding{b}, input.ACMEAccountID)
+	if err != nil {
+		WriteError(w, 500, "operation_error", err.Error())
+		return
+	}
+	WriteJSON(w, 201, map[string]any{"binding": b, "operation": operation, "access_url": a.BindingURL(b)})
 }
