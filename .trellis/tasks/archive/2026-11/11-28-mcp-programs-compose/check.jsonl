@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/runtime-contract.md", "reason": "MCP 鉴权与面板操作结果"}
+{"file": ".trellis/spec/backend/hosting-contract.md", "reason": "Compose 部署及托管程序行为"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "隔离验收与测试范围"}
