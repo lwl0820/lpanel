@@ -873,3 +873,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 32: 面板 MCP 接入与验收
+<!-- trellis-session: v=2 fp=a4cfa19097231464 -->
+
+**Date**: 2026-11-28
+**Task**: 面板 MCP 接入与验收
+**Branch**: `main`
+
+### Summary
+
+完成全权限独立令牌、21 项 MCP 管理工具与设置页。通过官方 SDK、Nginx HTTPS 和隔离 Docker 环境验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2ec83be` | feat: 增加带鉴权的 MCP 面板管理入口 |
+
+### Status
+
+[OK] **Completed**
