@@ -895,3 +895,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 33: MCP 程序管理与 Compose 项目创建验收
+<!-- trellis-session: v=2 fp=d1b8e22c5b7b7232 -->
+
+**Date**: 2026-11-28
+**Task**: MCP 程序管理与 Compose 项目创建验收
+**Branch**: `main`
+
+### Summary
+
+新增 11 个 MCP 工具，核对 32 项运行时工具与清单。真实 Docker、Compose、Supervisor 和官方 SDK 联调通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `47a714c` | feat: 增加 MCP 程序管理与 Compose 项目创建 |
+
+### Status
+
+[OK] **Completed**
