@@ -398,6 +398,10 @@ func copyProgramFiles(ctx context.Context, from, to string, uid, gid int) (int, 
 }
 
 func (a *App) deleteProgram(w http.ResponseWriter, r *http.Request) {
+	a.deleteProgramWithFiles(w, r, r.URL.Query().Get("remove_files") == "true")
+}
+
+func (a *App) deleteProgramWithFiles(w http.ResponseWriter, r *http.Request, removeFiles bool) {
 	a.programsMu.Lock()
 	defer a.programsMu.Unlock()
 	p, ok := a.requireProgram(w, r)
@@ -405,7 +409,6 @@ func (a *App) deleteProgram(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	removeFiles := r.URL.Query().Get("remove_files") == "true"
 	if removeFiles {
 		err := checkProgramDirectory(p.Directory)
 		if err == nil {

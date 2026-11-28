@@ -154,7 +154,7 @@ func (a *App) mcpTools() []mcpTool {
 			tool.PathValues = map[string]string{"id": "operation_id"}
 		}
 	}
-	return tools
+	return append(append(tools, a.mcpProjectTools()...), a.mcpProgramTools()...)
 }
 
 type mcpToolResult struct {
@@ -289,6 +289,9 @@ func mcpValidField(field mcpField, value jsontext.Value) bool {
 		return true
 	case "boolean":
 		return value.Kind() == 't' || value.Kind() == 'f'
+	case "integer":
+		var integer int
+		return value.Kind() == '0' && json.Unmarshal(value, &integer) == nil
 	case "array":
 		if value.Kind() != '[' {
 			return false

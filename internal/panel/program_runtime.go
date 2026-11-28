@@ -65,22 +65,24 @@ func (a *App) programRuntime(ctx context.Context, p Program) (ProgramRuntime, er
 
 func (a *App) registerProgramRuntime() {
 	const prefix = "GET /api/v1/programs/{id}"
-	for path, handle := range map[string]func(http.ResponseWriter, *http.Request, Program){
-		"/runtime": func(w http.ResponseWriter, r *http.Request, p Program) {
-			runtime, err := a.programRuntime(r.Context(), p)
-			if err != nil {
-				runtime.Message = "无法读取主进程的 TCP 状态：" + err.Error()
-			}
-			WriteJSON(w, http.StatusOK, runtime)
-		},
-		"/logs/stream": a.streamProgramLog,
-	} {
-		a.Mux.Handle(prefix+path, a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if p, ok := a.requireProgram(w, r); ok {
-				handle(w, r, p)
-			}
-		})))
+	a.Mux.Handle(prefix+"/runtime", a.RequireAuth(http.HandlerFunc(a.getProgramRuntime)))
+	a.Mux.Handle(prefix+"/logs/stream", a.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p, ok := a.requireProgram(w, r); ok {
+			a.streamProgramLog(w, r, p)
+		}
+	})))
+}
+
+func (a *App) getProgramRuntime(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireProgram(w, r)
+	if !ok {
+		return
 	}
+	runtime, err := a.programRuntime(r.Context(), p)
+	if err != nil {
+		runtime.Message = "无法读取主进程的 TCP 状态：" + err.Error()
+	}
+	WriteJSON(w, http.StatusOK, runtime)
 }
 
 // 每次按当前文件大小读取，日志轮转或截短后从新文件的最近输出重新开始。
