@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/runtime-contract.md", "reason": "面板路由、管理员会话和公网入口"}
+{"file": ".trellis/spec/backend/server-files.md", "reason": "宿主机文件操作的现有边界"}
+{"file": ".trellis/spec/backend/hosting-contract.md", "reason": "容器、网站、域名与证书操作"}
+{"file": ".trellis/spec/frontend/api-contract.md", "reason": "设置页和后台操作结果"}
